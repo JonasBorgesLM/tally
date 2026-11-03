@@ -1,0 +1,522 @@
+# CI for tally, a single-module Go library.
+#
+# Adapted from foundation/kit/ci/go-ci.yml and vane's pipeline. Single module
+# today, so no module matrix and no satellite-resolution job; both arrive with
+# the interop module (#30), because `go test ./...` does not descend into a
+# submodule and a green root says nothing about it.
+#
+# Every tool is pinned to an exact version and every action to a full commit
+# SHA, with the version in a trailing comment. `@latest` and `@v7` are mutable:
+# whoever controls them gets code execution in this pipeline. Dependabot
+# (.github/dependabot.yml) keeps the pins from going stale.
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+  schedule:
+    # Weekly, so a newly published vulnerability is found by govulncheck rather
+    # than by a user.
+    - cron: "17 6 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The library floor (RNF-01, go.mod). The version the module promises its
+  # importers, so build and test happen here as well as on stable.
+  GO_VERSION: "1.26"
+  GO_SUPPORTED_VERSION: "stable"
+  # golangci-lint typechecks against the stdlib of the toolchain it was built
+  # with and refuses a newer one. This pin and LINT_VERSION move together.
+  LINT_GO_VERSION: "1.26"
+  LINT_VERSION: "v2.12.2"
+  GOSEC_VERSION: "v2.28.0"
+  GOVULNCHECK_VERSION: "v1.7.0"
+  ACTIONLINT_VERSION: "v1.7.12"
+  # golang.org/x/exp has no tagged releases; this is an exact pseudo-version,
+  # the same pin bastion's release uses. Bump on a stated trigger, never on a
+  # schedule.
+  GORELEASE_VERSION: "v0.0.0-20260824195058-e88cd73687aa"
+  # Fail rather than silently fetch a module missing from the checksum
+  # database, and rather than silently rewrite go.mod.
+  GOFLAGS: -mod=readonly
+  GOSUMDB: sum.golang.org
+
+jobs:
+  # -------------------------------------------------------------- build ----
+  build:
+    name: build & test (go ${{ matrix.go }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # RNF-01: the floor and the current stable.
+        go: ["1.26", "stable"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ matrix.go }}
+          cache-dependency-path: go.mod
+
+      - name: go build
+        run: go build ./...
+
+      - name: go vet
+        run: go vet ./...
+
+      # RNF-06: the whole API is claimed safe for concurrent use, so -race is
+      # not optional. -shuffle=on keeps tests from depending on their order.
+      - name: go test -race
+        run: go test -race -shuffle=on -covermode=atomic -coverprofile=coverage.out ./...
+
+      - name: Report coverage
+        run: |
+          if [ -s coverage.out ]; then
+            go tool cover -func=coverage.out | tail -1
+          else
+            echo "no coverage profile yet (module has no tests)"
+          fi
+
+      - name: Upload coverage
+        if: matrix.go == '1.26'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage
+          path: coverage.out
+          if-no-files-found: warn
+
+  # ------------------------------------------------------- portability ----
+  #
+  # RNF-09: Linux and macOS. They disagree where this library is most delicate:
+  # File.Sync is F_FULLFSYNC on macOS, and flock and directory fsync sit behind
+  # syscalls. Windows is out of scope.
+  portability:
+    name: test (macos-latest)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: go.mod
+      - name: go test
+        run: go test -shuffle=on ./...
+
+  # ------------------------------------------------------- cross-build ----
+  #
+  # RNF-03 measures on a Raspberry Pi, so linux/arm64 is a real target. Tests are
+  # compiled for each target too (`-exec true` builds the test binary and skips
+  # running it), so a test file that only builds on the runner's platform is
+  # caught here.
+  cross-build:
+    name: cross-build (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux, goarch: arm64 }
+          - { goos: linux, goarch: amd64 }
+          - { goos: darwin, goarch: arm64 }
+    env:
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
+      CGO_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: go.mod
+
+      - name: go build
+        run: go build ./...
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: Compile the tests
+        run: go test -exec /bin/true ./...
+
+  # -------------------------------------------------------- boundaries ----
+  #
+  # The project-specific guards (RNF-01, RS-11, RI-01, the dependency direction).
+  # Same script as locally; see its header.
+  boundaries:
+    name: dependency & package boundaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: go.mod
+      - run: ./.github/scripts/check-boundaries.sh
+
+  # --------------------------------------------------------------- fuzz ----
+  #
+  # A short regression gate, not a search: the corpus under testdata/fuzz/
+  # replays every input a longer local run found interesting, regardless of
+  # -fuzztime. Targets are discovered, so a new one is fuzzed without editing
+  # this file. "no fuzz targets yet" is a true statement only until M1 (#16).
+  fuzz:
+    name: fuzz
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: go.mod
+      - name: go test -fuzz, 20s per target
+        run: |
+          set -o pipefail   # the step runs under bash -e only; the tee below must not hide go's status
+          found=0
+          for pkg in $(go list ./...); do
+            for target in $(go test -list '^Fuzz' "$pkg" | grep '^Fuzz' || true); do
+              found=1
+              echo "::group::$pkg $target"
+              # One retry, and only for a run that found nothing: the fuzz
+              # coordinator has reported its own -fuzztime expiry as "context
+              # deadline exceeded" and failed the job with no failing input
+              # (once in about 100 runs on vane; not reproduced locally in 30). A
+              # real finding always writes its input under testdata/fuzz and
+              # says "Failing input written to", so it is never retried.
+              if ! go test -run '^$' -fuzz "^${target}\$" -fuzztime 20s "$pkg" 2>&1 | tee "$RUNNER_TEMP/fuzz.log"; then
+                if grep -q 'context deadline exceeded' "$RUNNER_TEMP/fuzz.log" && ! grep -q 'Failing input written to' "$RUNNER_TEMP/fuzz.log"; then
+                  echo "::warning::$pkg $target: fuzz budget expiry reported as a failure with no failing input; retrying once"
+                  go test -run '^$' -fuzz "^${target}\$" -fuzztime 20s "$pkg"
+                else
+                  exit 1
+                fi
+              fi
+              echo "::endgroup::"
+            done
+          done
+          [ "$found" -eq 1 ] || echo "no fuzz targets yet"
+
+  # --------------------------------------------------------------- lint ----
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.LINT_GO_VERSION }}
+          cache-dependency-path: go.mod
+
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::these files are not gofmt'd:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: ${{ env.LINT_VERSION }}
+
+      - name: gosec
+        # -tests scans test files too: a fault-injection case that no longer
+        # compiles is one that is no longer being run.
+        run: |
+          go install github.com/securego/gosec/v2/cmd/gosec@${{ env.GOSEC_VERSION }}
+          gosec -tests -exclude-generated ./...
+
+      # The pipeline is code too. actionlint also runs shellcheck over every
+      # `run:` block; the scripts are checked directly.
+      - name: actionlint and shellcheck
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@${{ env.ACTIONLINT_VERSION }}
+          actionlint
+          shellcheck --severity=warning .github/scripts/*.sh
+
+  # ------------------------------------------------------- govulncheck ----
+  govulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          # Deliberately not the floor: a library scanned only at its floor is
+          # checked against a standard library that may no longer get fixes.
+          go-version: ${{ env.GO_SUPPORTED_VERSION }}
+          cache-dependency-path: go.mod
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@${{ env.GOVULNCHECK_VERSION }}
+          govulncheck ./...
+
+  # --------------------------------------------------------------- docs ----
+  #
+  # Requirement ids are cited from ADRs, godoc, tests and commits; a citation
+  # of a renumbered id is a reader following a reference to nothing.
+  docs:
+    name: documentation is current
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: ./.github/scripts/check-docs.sh
+
+  # ---------------------------------------------------- ADR immutability ----
+  #
+  # An ADR is never rewritten, only amended or superseded. Checkable: an
+  # amendment only adds lines.
+  adr-immutability:
+    name: ADRs are amended, never rewritten
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: An existing ADR may gain lines, never lose them
+        continue-on-error: ${{ contains(github.event.pull_request.labels.*.name, 'adr-typo') }}
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          rewritten=""
+          for f in $(git diff --name-only --diff-filter=M "$BASE"...HEAD -- 'docs/adr/[0-9]*.md'); do
+            deleted=$(git diff --numstat "$BASE"...HEAD -- "$f" | awk '{print $2}')
+            [ "${deleted:-0}" -gt 0 ] && rewritten="$rewritten $f($deleted lines removed)"
+          done
+          if [ -n "$rewritten" ]; then
+            echo "::error::an ADR was rewritten rather than amended:$rewritten"
+            echo "A change of mind is a new ADR that supersedes this one, or an"
+            echo "'## Amendment' section appended to it. A genuine typo fix:"
+            echo "label the PR 'adr-typo'."
+            exit 1
+          fi
+          echo "no ADR lost a line"
+
+  # ------------------------------------------------------------ git flow ----
+  #
+  # The branch model in CONTRIBUTING.md, asserted rather than remembered:
+  # main receives only release/* and hotfix/* branches; develop receives work
+  # branches, Dependabot, and the merge back from main after a release.
+  git-flow:
+    name: branch follows the git flow
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Head and base branches are a legal pair
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          version='v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?'
+          work='^(feat|fix|docs|test|refactor|perf|build|ci|chore)/([0-9]+-)?[a-z0-9][a-z0-9.-]*$'
+          echo "$HEAD_REF -> $BASE_REF"
+
+          if [ "$BASE_REF" = "main" ]; then
+            if printf '%s' "$HEAD_REF" | grep -qE "^(release|hotfix)/$version\$"; then
+              echo "release or hotfix into main"; exit 0
+            fi
+            echo "::error::only release/vX.Y.Z and hotfix/vX.Y.Z branches merge into main, not '$HEAD_REF'"
+            exit 1
+          fi
+
+          if [ "$BASE_REF" = "develop" ] && [ "$HEAD_REF" = "main" ]; then
+            echo "merge back from main after a release"; exit 0
+          fi
+          if printf '%s' "$HEAD_REF" | grep -qE "^(dependabot/|hotfix/$version\$)"; then
+            echo "dependabot or hotfix merge back"; exit 0
+          fi
+          if printf '%s' "$HEAD_REF" | grep -qE "$work"; then
+            echo "work branch"; exit 0
+          fi
+
+          echo "::error::branch '$HEAD_REF' does not follow <type>/<issue>-<name>"
+          echo "Types: feat fix docs test refactor perf build ci chore"
+          echo "  feat/11-wire-primitives    ci/7-pipeline    docs/2-requirements"
+          exit 1
+
+  # ------------------------------------------------------------ commits ----
+  #
+  # git log has to be readable a year from now by someone who was not here.
+  # The PR title is checked too: it becomes the subject on a squash merge.
+  commits:
+    name: conventional commits
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    env:
+      TYPES: feat|fix|docs|test|refactor|perf|build|ci|chore|revert
+      SCOPES: tally|wire|note|fsx|filestore|seal|anchor|tallytest|cli|interop|ecosystem|usher|crier|adr|docs|deps|ci|release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Every commit in this PR follows the convention
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          pattern="^($TYPES)(\\(($SCOPES)\\))?!?: .+"
+          bad=0
+          # A release or hotfix into main carries every commit develop gained
+          # since the last release. Those were already checked on their way
+          # into develop, and are immutable there; rechecking them here can
+          # only fail a release for a subject nobody can change any more. So
+          # into main, only the commits not yet on develop are checked.
+          range="$BASE..HEAD"
+          if [ "$BASE_REF" = "main" ]; then
+            git fetch --no-tags origin develop
+            range="origin/develop..HEAD"
+          fi
+          while IFS= read -r sha; do
+            # A merge commit's subject is generated, not written.
+            [ "$(git rev-list --no-walk --count --merges "$sha")" -eq 1 ] && continue
+            subject=$(git log -1 --format=%s "$sha")
+            if ! printf '%s' "$subject" | grep -qE "$pattern"; then
+              echo "::error::not a conventional commit: $subject"; bad=1; continue
+            fi
+            if [ ${#subject} -gt 72 ]; then
+              echo "::error::subject over 72 characters (${#subject}): $subject"; bad=1
+            fi
+            case "$subject" in
+              *.) echo "::error::subject ends with a period: $subject"; bad=1 ;;
+            esac
+          done < <(git rev-list "$range")
+
+          if [ "$bad" -ne 0 ]; then
+            echo ""
+            echo "Format:  <type>(<scope>)!: <subject>"
+            echo "Types:   $TYPES"
+            echo "Scopes:  $SCOPES"
+            echo ""
+            echo "  feat(wire): reject trailing bytes after the last field"
+            echo "  fix(filestore): sync the directory after creating a segment"
+            echo "  docs(adr): record the anchor's required property"
+            echo ""
+            echo "Explain WHY in the body and cite the requirement or ADR"
+            echo "(Refs RS-02, ADR-0003; Closes #11)."
+            exit 1
+          fi
+          echo "all commits follow the convention"
+
+      # The squash subject is the title plus " (#N)", appended by GitHub, so
+      # the limit applies to that: a 67-character title on vane#56 became
+      # a 73-character subject on develop that no check had seen.
+      - name: The PR title follows the convention
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+          NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if ! printf '%s' "$TITLE" | grep -qE "^($TYPES)(\\(($SCOPES)\\))?!?: .+"; then
+            echo "::error::PR title is not a conventional commit: $TITLE"
+            exit 1
+          fi
+          squashed="$TITLE (#$NUMBER)"
+          if [ ${#squashed} -gt 72 ]; then
+            echo "::error::PR title too long: the squash subject '$squashed' is ${#squashed} characters, over 72"
+            exit 1
+          fi
+          echo "PR title follows the convention"
+
+  # ------------------------------------------------------ API compatibility ----
+  #
+  # RNF-05: the API is a promise. Compared against the latest release tag. In
+  # v0.x an incompatible change is allowed, but never by accident: it must be
+  # declared with `!` in
+  # the PR title, which puts it in the squash subject and the changelog.
+  api-compat:
+    name: API compatibility
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_SUPPORTED_VERSION }}
+          cache-dependency-path: go.mod
+
+      - name: gorelease against the latest tag
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          base=$(git tag --list 'v*' --sort=-v:refname | grep -vE -- '-rc\.' | head -1)
+          if [ -z "$base" ]; then
+            echo "no release tag yet; nothing to compare against"
+            exit 0
+          fi
+          go install golang.org/x/exp/cmd/gorelease@${{ env.GORELEASE_VERSION }}
+          gorelease -base="$base" | tee "$RUNNER_TEMP/apidiff.txt" || true
+          if grep -q '^## incompatible changes' "$RUNNER_TEMP/apidiff.txt"; then
+            if printf '%s' "$TITLE" | grep -qE '^[a-z]+(\([a-z0-9]+\))?!: '; then
+              echo "::warning::incompatible API change, declared with '!' in the title"
+            else
+              echo "::error::incompatible API change against $base; declare it with '!' in the PR title or keep the API compatible"
+              exit 1
+            fi
+          fi
+
+  # -------------------------------------------------- dependency review ----
+  dependency-review:
+    name: dependency review
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          # A new dependency here is a design decision (RNF-01), so any known
+          # vulnerability fails rather than being triaged later.
+          fail-on-severity: low
+          deny-licenses: GPL-2.0, GPL-3.0, AGPL-3.0, LGPL-2.1, LGPL-3.0
+          comment-summary-in-pr: on-failure
+
+  # -------------------------------------------------------------- gate ----
+  #
+  # The single required check. Branch protection names jobs, and a matrix
+  # job's name changes with the matrix; protecting this one gate means adding a
+  # job cannot silently widen the gap between "CI passed" and "everything ran".
+  ci-ok:
+    name: CI OK
+    if: always()
+    needs:
+      - build
+      - portability
+      - cross-build
+      - boundaries
+      - fuzz
+      - lint
+      - govulncheck
+      - docs
+      - adr-immutability
+      - git-flow
+      - commits
+      - api-compat
+      - dependency-review
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any dependency failed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Upstream results: $RESULTS"
+          for r in $RESULTS; do
+            # `skipped` is legitimate: PR-only jobs do not run on push.
+            case "$r" in
+              success|skipped) ;;
+              *) echo "::error::an upstream job reported '$r'"; exit 1 ;;
+            esac
+          done
+          echo "all upstream jobs passed or were skipped"

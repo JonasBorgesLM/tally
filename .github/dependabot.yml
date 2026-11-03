@@ -1,0 +1,34 @@
+# Updates target develop, like every other change (CONTRIBUTING.md); without
+# target-branch they would open against the default branch.
+#
+# Commit messages are Conventional Commits with the `deps` scope, so they pass
+# the `commits` job: `ci(deps): bump actions/checkout ...`.
+version: 2
+
+updates:
+  # tally is stdlib only (RNF-01), so this should stay quiet. A pull request here
+  # is a dependency that should not be there. /interop joins this list with #30.
+  - package-ecosystem: gomod
+    directory: /
+    target-branch: develop
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels: [dependencies]
+    commit-message:
+      prefix: build
+      include: scope
+
+  # Actions are pinned by commit SHA; this keeps the pins from going stale.
+  # An action update is a supply-chain change and gets the same review as code.
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: develop
+    schedule:
+      interval: weekly
+      day: monday
+    labels: [dependencies, ci]
+    commit-message:
+      prefix: ci
+      include: scope
