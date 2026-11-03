@@ -1,0 +1,72 @@
+# Strict by intent. tally's failure modes are quiet: an ignored error on a write or
+# an fsync is the defect the library exists to rule out, a switch over a failure
+# kind that falls through turns a violation into a pass, and a missing doc comment
+# ships a contract (durable when, safe for what) that exists only in the author's
+# head. None of those produce a stack trace.
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard
+  enable:
+    - contextcheck
+    - copyloopvar
+    - dupl
+    - errorlint
+    - exhaustive
+    - gocritic
+    - godot
+    - goconst
+    - gosec
+    - misspell
+    - nilerr
+    - noctx
+    - nolintlint
+    - prealloc
+    - predeclared
+    - revive
+    - unconvert
+    - unparam
+    - wastedassign
+    - whitespace
+
+  settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+    exhaustive:
+      # Every switch over FailureKind, Outcome or a tail state handles every value.
+      # A missing case that falls through to "ok" is invisible in review.
+      default-signifies-exhaustive: true
+    goconst:
+      ignore-tests: true
+    gocritic:
+      enabled-tags: [diagnostic, performance, style]
+      disabled-checks: [hugeParam, rangeValCopy]
+    govet:
+      enable-all: true
+      disable: [fieldalignment]
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+      allow-unused: false
+    revive:
+      rules:
+        - name: exported
+          arguments: [checkPrivateReceivers]
+        - name: package-comments
+
+  exclusions:
+    rules:
+      # Table-driven tests are repetitive by nature, and a test that
+      # ignores a cleanup error is not the risk this configuration exists for.
+      - path: _test\.go$
+        linters: [dupl, errcheck, gosec, goconst, unparam]
+
+formatters:
+  enable: [gofmt, goimports]
+  settings:
+    goimports:
+      local-prefixes: [github.com/JonasBorgesLM/tally]
