@@ -31,3 +31,9 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Graphify (generated per machine)
+graphify-out/
+
+# The CLI, when built at the repository root
+/tally
