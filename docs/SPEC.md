@@ -343,7 +343,8 @@ starts are judged.
 - optionally, a start checkpoint, for incremental verification (RF-08);
 - optionally, checkpoints read from an anchor, and other checkpoints, each marked as from an anchor or not;
 - optionally, a heartbeat interval `T`, a `tolerance` and the current time, all supplied by the caller.
-  The format sets no default for any of them.
+  The format sets no default for any of them;
+- optionally, a requirement that the whole log be attested (RF-18, ADR-0018).
 
 **Error, not violation.** The result is an `error`, never a report, when verification is not possible:
 an IO error, no segment file, a start checkpoint that is not accepted (§5.4), or, with genesis not read,
@@ -403,11 +404,15 @@ accepted checkpoints naming more than one `origin` (step 3).
 9. **Result.** `AttestedSize` is the largest `size` among matched checkpoints, or 0 if none matched. It never
    exceeds `Size`. `UnattestedEntries = Size - AttestedSize`, counted in leaves: with nothing attested,
    genesis is among them.
+10. **Full attestation, if required.** If the caller required the whole log to be attested and
+    `UnattestedEntries > 0`, that is `UnattestedTail`. Without the requirement, an unattested tail is not a
+    violation: it is reported in `UnattestedEntries`, and §7.1 says what it means.
 
 ### 7.1 What a result asserts
 
 `OK() == true` exactly when no violation of any kind in §7.2 was reported, including `HeartbeatGap`,
-checkpoint order and `PrunedWithoutTrustedCheckpoint`. It means: every record read was well-formed, the
+checkpoint order, `PrunedWithoutTrustedCheckpoint`, and `UnattestedTail` when full attestation was
+required. It means: every record read was well-formed, the
 chain is unbroken, and every accepted checkpoint agrees with it. **It asserts nothing about entries past
 `AttestedSize`,** and a trust that comes only from checkpoints read off the host being verified is worth
 no more than that host.
@@ -435,6 +440,7 @@ REQUIREMENTS is the one corrected. Every check in this document reports exactly 
 | `TruncatedBelowCheckpoint` | A checkpoint's `size` exceeds a log read without violation. |
 | `HeartbeatGap` | §7 step 8. |
 | `PrunedWithoutTrustedCheckpoint` | §7 step 7. |
+| `UnattestedTail` | §7 step 10: full attestation was required, and `UnattestedEntries > 0`. |
 
 ## 8. Test vectors
 
