@@ -108,7 +108,7 @@ func TestEveryBodyByteMutatedWithCRCRecomputed(t *testing.T) {
 	head := b.head()
 	masks := []byte{0x01, 0x80, 0xFF}
 
-	ran, kinds := 0, map[failureKind]int{}
+	ran, kinds := 0, map[FailureKind]int{}
 	for fi, f := range b.frames {
 		for i := f.start + 4; i < f.crc; i++ {
 			for _, m := range masks {
@@ -136,7 +136,7 @@ func TestEveryBodyByteMutatedWithCRCRecomputed(t *testing.T) {
 		t.Fatalf("ran %d mutations, want %d", ran, want)
 	}
 	// The chain is what caught them, not only the decoder.
-	if kinds[kindPrevHashMismatch] == 0 || kinds[kindCheckpointMismatch] == 0 {
+	if kinds[PrevHashMismatch] == 0 || kinds[CheckpointMismatch] == 0 {
 		t.Fatalf("no PrevHashMismatch or CheckpointMismatch among %v", kinds)
 	}
 	t.Logf("%d mutations, by kind: %v", ran, kinds)
@@ -157,7 +157,7 @@ func TestFrameBytesMutatedWithoutRecompute(t *testing.T) {
 			log[i] ^= 0x01
 			_, v := verifyFrames(log, b.head())
 			ran++
-			if v == nil || v.kind != kindMalformedRecord {
+			if v == nil || v.kind != MalformedRecord {
 				t.Fatalf("frame %d, byte %d: %v, want MalformedRecord", fi, i, v)
 			}
 			if inBody := i >= f.start+4 && i < f.crc; inBody && !errors.Is(v.err, errFrameCRC) {
@@ -184,7 +184,7 @@ func TestTailIsUncoveredWithoutAHead(t *testing.T) {
 	if _, v := verifyFrames(log, nil); v != nil {
 		t.Fatalf("without a head the tail change was caught (%v): the residual changed, update T-01", v)
 	}
-	if _, v := verifyFrames(log, b.head()); v == nil || v.kind != kindCheckpointMismatch {
+	if _, v := verifyFrames(log, b.head()); v == nil || v.kind != CheckpointMismatch {
 		t.Fatalf("with the head: %v, want CheckpointMismatch", v)
 	}
 }
@@ -200,7 +200,7 @@ func TestChainRules(t *testing.T) {
 		name     string
 		build    func(b *logBuilder)
 		head     func(b *logBuilder) *trustedHead
-		kind     failureKind
+		kind     FailureKind
 		size     uint64
 		wantSeqs uint64
 	}{
@@ -208,38 +208,38 @@ func TestChainRules(t *testing.T) {
 			b.entry(nil)
 			b.seq++
 			b.entry(nil)
-		}, nil, kindSeqGap, 2, 2},
+		}, nil, SeqGap, 2, 2},
 		{"seq repeats", func(b *logBuilder) {
 			b.entry(nil)
 			b.seq--
 			b.entry(nil)
-		}, nil, kindSeqRegression, 2, 2},
+		}, nil, SeqRegression, 2, 2},
 		{"recorded_at goes back", func(b *logBuilder) {
 			b.entry(nil)
 			b.entry(func(e *entry) { e.recordedAt = 1 })
-		}, nil, kindTimeRegression, 2, 2},
+		}, nil, TimeRegression, 2, 2},
 		{"first entry before genesis created_at", func(b *logBuilder) {
 			b.entry(func(e *entry) { e.recordedAt = goldenGenesis().createdAt - 1 })
-		}, nil, kindTimeRegression, 1, 1},
+		}, nil, TimeRegression, 1, 1},
 		{"prev_hash wrong", func(b *logBuilder) {
 			b.entry(nil)
 			b.entry(func(e *entry) { e.prevHash[0] ^= 1 })
-		}, nil, kindPrevHashMismatch, 2, 2},
+		}, nil, PrevHashMismatch, 2, 2},
 		{"log_id of another log", func(b *logBuilder) {
 			b.entry(func(e *entry) { e.logID[0] ^= 1 })
-		}, nil, kindMalformedRecord, 1, 1},
+		}, nil, MalformedRecord, 1, 1},
 		{"a second genesis", func(b *logBuilder) {
 			b.entry(nil)
 			b.raw(goldenGenesis())
-		}, nil, kindMalformedRecord, 2, 2},
+		}, nil, MalformedRecord, 2, 2},
 		{"a record-local rule", func(b *logBuilder) {
 			b.entry(func(e *entry) { e.action = "Login" })
-		}, nil, kindMalformedRecord, 1, 1},
+		}, nil, MalformedRecord, 1, 1},
 		{"seq and prev_hash both wrong: seq is listed first", func(b *logBuilder) {
 			b.entry(nil)
 			b.seq++
 			b.entry(func(e *entry) { e.prevHash[0] ^= 1 })
-		}, nil, kindSeqGap, 2, 2},
+		}, nil, SeqGap, 2, 2},
 		{"truncated below the head", func(b *logBuilder) {
 			b.entry(nil)
 			b.entry(nil)
@@ -247,14 +247,14 @@ func TestChainRules(t *testing.T) {
 			h := b.head()
 			h.size++
 			return h
-		}, kindTruncatedBelowCheckpoint, 3, 3},
+		}, TruncatedBelowCheckpoint, 3, 3},
 		{"head names a different leaf", func(b *logBuilder) {
 			b.entry(nil)
 		}, func(b *logBuilder) *trustedHead {
 			h := b.head()
 			h.hash[0] ^= 1
 			return h
-		}, kindCheckpointMismatch, 2, 1},
+		}, CheckpointMismatch, 2, 1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -281,7 +281,7 @@ func TestFirstRecordMustBeGenesis(t *testing.T) {
 	b.entry(nil)
 	withoutGenesis := b.buf[b.frames[1].start:]
 	size, v := verifyFrames(withoutGenesis, nil)
-	if v == nil || v.kind != kindMalformedRecord || size != 0 {
+	if v == nil || v.kind != MalformedRecord || size != 0 {
 		t.Fatalf("got size %d, %v; want size 0, MalformedRecord", size, v)
 	}
 }
@@ -299,7 +299,7 @@ func TestEntryAtLeafZeroIsNotAGenesis(t *testing.T) {
 		t.Fatal(err)
 	}
 	size, v := verifyFrames(appendFrame(nil, body), nil)
-	if v == nil || v.kind != kindMalformedRecord || size != 0 {
+	if v == nil || v.kind != MalformedRecord || size != 0 {
 		t.Fatalf("got size %d, %v; want size 0, MalformedRecord", size, v)
 	}
 }
@@ -316,7 +316,7 @@ func TestStopsAtTheFirstViolation(t *testing.T) {
 	head.size += 10
 
 	size, v := verifyFrames(b.buf, head)
-	if v == nil || v.kind != kindPrevHashMismatch || size != 2 {
+	if v == nil || v.kind != PrevHashMismatch || size != 2 {
 		t.Fatalf("got size %d, %v; want size 2, PrevHashMismatch", size, v)
 	}
 }

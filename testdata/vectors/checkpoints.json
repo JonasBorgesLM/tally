@@ -1,0 +1,11 @@
+{
+  "comment": "tally SPEC v1 checkpoint vector over records.json, signed with the PUBLIC test key of keys.json. See README.md.",
+  "checkpoints": [
+    {
+      "size": "5",
+      "head_hex": "ad6c61a5eb15cbe9cbea4780baee32ebd6e201011902fea30dd7b628692faa89",
+      "text": "example.com/log\ntally-chain/v1\n5\nrWxhpesVy+nL6keAuu4y69biAQEZAv6jDde2KGkvqok=\n1972-04-20T13:17:39.790382896Z\nclosed\n",
+      "note": "example.com/log\ntally-chain/v1\n5\nrWxhpesVy+nL6keAuu4y69biAQEZAv6jDde2KGkvqok=\n1972-04-20T13:17:39.790382896Z\nclosed\n\n— example.com/log 1FXFIa2o0yfhxQByOOzLQSoeufFbs0rtYQfFlN/sdjbVXBIK+iEWDMOY80b3omQ1TouvhCkRBtkbBGLk9bxQrim87Ao=\n"
+    }
+  ]
+}

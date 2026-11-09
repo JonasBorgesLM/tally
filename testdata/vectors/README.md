@@ -56,20 +56,36 @@ Points that are easy to get wrong, which this key exercises:
 The key id was also recomputed outside Go, and `golang.org/x/mod/sumdb/note` parses both keys,
 opens the note, and produces the same note bytes when signing the same text.
 
+## `checkpoints.json`
+
+One checkpoint (SPEC §5.2) over the head of `records.json`: `size` 5, `head_hex` the last record's
+`leaf_hash_hex`, `recorded_at` the head entry's, and `state` `closed`. It is signed with the test key of
+`keys.json`, and `note` is the whole signed note.
+
+To check an implementation: open `note` under the verifier key (SPEC §5.4), parse `text` (§5.2), and
+verify `records.json` with this checkpoint (§7). The result is a valid log of size 5, all of it
+attested. `golang.org/x/mod/sumdb/note` also opens this note under the published key.
+
+Points that are easy to get wrong:
+
+- **`recorded_at` always has nine fractional digits**, and ends in `Z` (§5.2). Here the digits happen to
+  end in a non-zero, but a formatter that trims trailing zeros, such as Go's `time.RFC3339Nano`, is
+  still wrong.
+- **The size counts leaves, genesis included.** Four entries make a size of 5 (§2.4).
+
 ## Not here yet
 
-- **Checkpoints** (SPEC §5.2) come with the checkpoint implementation (#26).
 - **Segment files** (SPEC §3) come with the file store (#33).
 
 ## How they are made
 
-`TestRecordVectors` (`vectors_test.go`) and `TestKeyVectors` (`key_vectors_test.go`) compare these
+`TestRecordVectors`, `TestKeyVectors` and `TestCheckpointVectors` (in the `*vectors_test.go` files) compare these
 files with the implementation on every run, and never rewrite them. A suite that regenerated vectors
 would update them silently on a format break, which is the one change they exist to catch. To
 regenerate them after a deliberate format change:
 
 ```bash
-go test -run 'TestRecordVectors|TestKeyVectors' -write-vectors .
+go test -run 'TestRecordVectors|TestKeyVectors|TestCheckpointVectors' -write-vectors .
 ```
 
 Then review the diff. A format change updates `docs/SPEC.md` and these vectors in the same pull request.
