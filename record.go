@@ -57,15 +57,6 @@ const (
 	actorSystem  actorKind = 0x03
 )
 
-type outcome uint8
-
-const (
-	outcomeSuccess outcome = 0x01
-	outcomeFailure outcome = 0x02
-	outcomeDenied  outcome = 0x03
-	outcomeError   outcome = 0x04
-)
-
 type payloadKind uint8
 
 const (
@@ -99,7 +90,7 @@ type entry struct {
 	actorID     []byte
 	action      string
 	resource    string
-	outcome     outcome
+	outcome     Outcome
 	payloadKind payloadKind
 	subjectRef  []byte
 	payload     []byte
@@ -225,7 +216,7 @@ func decodeFields(body []byte) (record, error) {
 		e.actorID = d.Bytes(maxActorID)
 		e.action = d.String(maxAction)
 		e.resource = d.String(maxResource)
-		e.outcome = outcome(d.Uint8())
+		e.outcome = Outcome(d.Uint8())
 		e.payloadKind = payloadKind(d.Uint8())
 		e.subjectRef = d.Bytes(maxSubjectRef)
 		e.payload = d.Bytes(maxPayload)
@@ -240,15 +231,23 @@ func decodeFields(body []byte) (record, error) {
 	return r, nil
 }
 
+// validate applies the record-local rules of SPEC §2. A failure is the
+// *ValidationError the rule produced, wrapped in errMalformed, so the verifier
+// classifies it (§7.2) and errors.As still reaches the field.
 func validate(r record) error {
+	var err error
 	switch r := r.(type) {
 	case *genesis:
-		return validateGenesis(r)
+		err = validateGenesis(r)
 	case *entry:
-		return validateEntry(r)
+		err = validateEntry(r)
 	default:
 		return fmt.Errorf("%w: unknown record %T", errMalformed, r)
 	}
+	if err != nil {
+		return fmt.Errorf("%w: %w", errMalformed, err)
+	}
+	return nil
 }
 
 // validateGenesis applies SPEC §2.1. origin becomes a signed-note key name, so
@@ -256,40 +255,41 @@ func validate(r record) error {
 func validateGenesis(g *genesis) error {
 	switch {
 	case g.origin == "":
-		return fmt.Errorf("%w: empty origin", errMalformed)
+		return invalid("origin", "is empty")
 	case len(g.origin) > maxOrigin:
-		return fmt.Errorf("%w: origin over %d bytes", errMalformed, maxOrigin)
+		return invalid("origin", fmt.Sprintf("is over %d bytes", maxOrigin))
 	case strings.Contains(g.origin, "+"):
-		return fmt.Errorf("%w: origin contains '+'", errMalformed)
+		return invalid("origin", "contains '+'")
 	case !cleanText(g.origin):
-		return fmt.Errorf("%w: origin is not valid UTF-8 or holds a forbidden code point", errMalformed)
+		return invalid("origin", "is not valid UTF-8 or holds a forbidden code point")
 	}
 	return nil
 }
 
 // validateEntry applies the rules of SPEC §2.2 that need no other record, in
 // the order the spec lists them, so the first failure is the one every
-// verifier reports. Messages name the field, never its value (RS-07).
+// verifier reports. Validate of an Event runs the same function (RF-02), so the
+// writer and the verifier cannot disagree on a rule.
 func validateEntry(e *entry) error {
 	if len(e.eventID) == 0 {
-		return fmt.Errorf("%w: empty event_id", errMalformed)
+		return invalid("event_id", "is empty")
 	}
 	if len(e.eventID) > maxEventID {
-		return fmt.Errorf("%w: event_id over %d bytes", errMalformed, maxEventID)
+		return invalid("event_id", fmt.Sprintf("is over %d bytes", maxEventID))
 	}
 	if err := validateActor(e.actorKind, e.actorID); err != nil {
 		return err
 	}
 	if !validAction(e.action) {
-		return fmt.Errorf("%w: action does not match the required pattern", errMalformed)
+		return invalid("action", fmt.Sprintf("does not match %s or is over %d bytes", actionPattern, maxAction))
 	}
 	if len(e.resource) > maxResource || strings.Contains(e.resource, "@") || !cleanText(e.resource) {
-		return fmt.Errorf("%w: resource is over %d bytes or holds '@' or a forbidden code point", errMalformed, maxResource)
+		return invalid("resource", fmt.Sprintf("is over %d bytes, or holds '@' or a forbidden code point", maxResource))
 	}
 	switch e.outcome {
-	case outcomeSuccess, outcomeFailure, outcomeDenied, outcomeError:
+	case OutcomeSuccess, OutcomeFailure, OutcomeDenied, OutcomeError:
 	default:
-		return fmt.Errorf("%w: unknown outcome %#x", errMalformed, uint8(e.outcome))
+		return invalid("outcome", fmt.Sprintf("has the unknown value %#x", uint8(e.outcome)))
 	}
 	return validatePayload(e.payloadKind, e.subjectRef, e.payload)
 }
@@ -298,19 +298,19 @@ func validateActor(kind actorKind, id []byte) error {
 	switch kind {
 	case actorSubject:
 		if len(id) != subjectRefLen {
-			return fmt.Errorf("%w: subject actor_id is %d bytes, want %d", errMalformed, len(id), subjectRefLen)
+			return invalid("actor_id", fmt.Sprintf("of a subject is %d bytes, want %d", len(id), subjectRefLen))
 		}
 	case actorService:
 		if len(id) == 0 || len(id) > maxActorID || bytes.IndexByte(id, '@') >= 0 || !cleanText(string(id)) {
-			return fmt.Errorf("%w: service actor_id is empty, over %d bytes, or holds '@' or a forbidden code point",
-				errMalformed, maxActorID)
+			return invalid("actor_id", fmt.Sprintf(
+				"of a service is empty, over %d bytes, not valid UTF-8, or holds '@' or a forbidden code point", maxActorID))
 		}
 	case actorSystem:
 		if len(id) != 0 {
-			return fmt.Errorf("%w: system actor_id is not empty", errMalformed)
+			return invalid("actor_id", "of the system is not empty")
 		}
 	default:
-		return fmt.Errorf("%w: unknown actor_kind %#x", errMalformed, uint8(kind))
+		return invalid("actor_kind", fmt.Sprintf("has the unknown value %#x", uint8(kind)))
 	}
 	return nil
 }
@@ -319,30 +319,36 @@ func validatePayload(kind payloadKind, ref, payload []byte) error {
 	switch kind {
 	case payloadNone:
 		if len(ref) != 0 || len(payload) != 0 {
-			return fmt.Errorf("%w: payload_kind none with a subject_ref or payload", errMalformed)
+			return invalid("payload", "is present with payload_kind none")
 		}
 	case payloadPlain:
 		// An empty plain payload would be a second encoding of "no payload".
-		if len(ref) != 0 || len(payload) == 0 {
-			return fmt.Errorf("%w: plain payload empty or with a subject_ref", errMalformed)
+		if len(ref) != 0 {
+			return invalid("subject_ref", "is present on a plain payload")
+		}
+		if len(payload) == 0 {
+			return invalid("payload", "is empty with payload_kind plain")
 		}
 	case payloadSealed:
 		if len(ref) != subjectRefLen {
-			return fmt.Errorf("%w: sealed payload subject_ref is %d bytes, want %d", errMalformed, len(ref), subjectRefLen)
+			return invalid("subject_ref", fmt.Sprintf("of a sealed payload is %d bytes, want %d", len(ref), subjectRefLen))
 		}
 		if len(payload) < sealedMin || payload[0] != sealFormatV1 {
-			return fmt.Errorf("%w: sealed payload under %d bytes or with an unknown seal format", errMalformed, sealedMin)
+			return invalid("payload", fmt.Sprintf("is sealed but under %d bytes or with an unknown seal format", sealedMin))
 		}
 	default:
-		return fmt.Errorf("%w: unknown payload_kind %#x", errMalformed, uint8(kind))
+		return invalid("payload_kind", fmt.Sprintf("has the unknown value %#x", uint8(kind)))
 	}
 	if len(payload) > maxPayload {
-		return fmt.Errorf("%w: payload over %d bytes", errMalformed, maxPayload)
+		return invalid("payload", fmt.Sprintf("is over %d bytes", maxPayload))
 	}
 	return nil
 }
 
-// validAction reports whether s matches ^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$
+// actionPattern is the rule validAction implements, stated for error messages.
+const actionPattern = `^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$`
+
+// validAction reports whether s matches actionPattern
 // and fits SPEC §6. It is written out rather than compiled with regexp so that
 // the package holds no global state.
 func validAction(s string) bool {
