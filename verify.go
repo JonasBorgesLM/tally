@@ -80,7 +80,8 @@ type Failure struct {
 type VerifyOption func(*verifyConfig)
 
 type verifyConfig struct {
-	start SignedCheckpoint
+	start       SignedCheckpoint
+	requireFull bool
 }
 
 // FromCheckpoint verifies incrementally (RF-08): from cp's head on, trusting
@@ -89,6 +90,18 @@ type verifyConfig struct {
 // violation of the log.
 func FromCheckpoint(cp SignedCheckpoint) VerifyOption {
 	return func(c *verifyConfig) { c.start = cp }
+}
+
+// WithRequireFullyAttested makes an unattested tail a failure, UnattestedTail
+// (RF-18, ADR-0018): every leaf read must be covered by a trusted checkpoint.
+//
+// Without it, an unattested tail is not a violation, and OK can be true while
+// UnattestedEntries is not zero: the leaf hash is not stored, so the entries
+// past the last checkpoint can be rewritten undetected, even without the key
+// (T-01). A live log always has such a tail between checkpoints (RF-06), so
+// the option suits the audit of a closed or quiesced log.
+func WithRequireFullyAttested() VerifyOption {
+	return func(c *verifyConfig) { c.requireFull = true }
 }
 
 // checkpoint is an accepted checkpoint (SPEC §5.4 step 5).
@@ -360,6 +373,12 @@ func Verify(ctx context.Context, src Source, keys Verifiers, opts ...VerifyOptio
 		}
 	}
 	rep.UnattestedEntries = rep.Size - rep.AttestedSize
+
+	// Step 10: full attestation, if required (ADR-0018).
+	if cfg.requireFull && rep.UnattestedEntries > 0 {
+		rep.Failures = append(rep.Failures, Failure{Kind: UnattestedTail, Seq: rep.AttestedSize,
+			Note: fmt.Sprintf("%d leaves past the last trusted checkpoint", rep.UnattestedEntries)})
+	}
 	return rep, nil
 }
 
