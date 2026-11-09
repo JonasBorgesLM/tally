@@ -69,7 +69,7 @@ func goldenEntry(t *testing.T) *entry {
 		actorID:     []byte{},
 		action:      "user.login",
 		resource:    "",
-		outcome:     outcomeSuccess,
+		outcome:     OutcomeSuccess,
 		payloadKind: payloadNone,
 		subjectRef:  []byte{},
 		payload:     []byte{},
@@ -143,7 +143,7 @@ func TestRoundTripVariants(t *testing.T) {
 		"plain payload":  func(e *entry) { e.payloadKind, e.payload = payloadPlain, []byte{0} },
 		"sealed payload": func(e *entry) { e.payloadKind, e.subjectRef, e.payload = payloadSealed, ref, sealed },
 		"resource":       func(e *entry) { e.resource = "invoice/2026/ação" },
-		"denied":         func(e *entry) { e.outcome = outcomeDenied },
+		"denied":         func(e *entry) { e.outcome = OutcomeDenied },
 	} {
 		t.Run(name, func(t *testing.T) {
 			e := goldenEntry(t)
