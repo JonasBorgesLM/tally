@@ -51,19 +51,26 @@ env:
 jobs:
   # -------------------------------------------------------------- build ----
   build:
-    name: build & test (go ${{ matrix.go }})
+    name: build & test (${{ matrix.module }}, go ${{ matrix.go }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         # RNF-01: the floor and the current stable.
         go: ["1.26", "stable"]
+        # RNF-02: interop is its own module, and `go test ./...` at the root
+        # does not descend into it. A matrix entry rather than a loop: a loop
+        # that exits early reports green for the modules it never reached.
+        module: [".", "interop"]
+    defaults:
+      run:
+        working-directory: ${{ matrix.module }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ matrix.go }}
-          cache-dependency-path: go.mod
+          cache-dependency-path: ${{ matrix.module }}/go.mod
 
       - name: go build
         run: go build ./...
@@ -85,7 +92,7 @@ jobs:
           fi
 
       - name: Upload coverage
-        if: matrix.go == '1.26'
+        if: matrix.go == '1.26' && matrix.module == '.'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage

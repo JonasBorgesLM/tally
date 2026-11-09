@@ -33,7 +33,7 @@ filestore ──▶ internal/fsx
 ```
 
 - The root imports only `internal/*`. `internal/*` imports nothing above it.
-- The module is stdlib only (RNF-01). `interop/` (from #30) has its own `go.mod`.
+- The module is stdlib only (RNF-01). `interop/` has its own `go.mod`, tests only, and may depend on `golang.org/x/mod`.
 - A new package gets added to `KNOWN` in `check-boundaries.sh`, or it fails.
 
 ## Commands
@@ -46,7 +46,12 @@ gosec -tests -exclude-generated ./...
 ./.github/scripts/check-docs.sh
 ```
 
-`interop/` will need its own commands: `go test ./...` at the root does not descend into it.
+`interop/` is its own module and needs its own run: `go test ./...` at the root does not descend into
+it. It replaces `tally` with `../`, so it always tests the code beside it.
+
+```bash
+(cd interop && go vet ./... && go test -race ./...)
+```
 
 ## Conventions
 
