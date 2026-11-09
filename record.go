@@ -161,18 +161,29 @@ func encodeFields(r record) ([]byte, error) {
 // validity rules of SPEC §2 that need no other record. The result holds no
 // reference to body.
 func decodeRecord(body []byte) (record, error) {
-	return decodeRecordWith(body, encodeRecord)
-}
-
-// decodeRecordWith is decodeRecord with the re-encoder injected, so that the
-// check of SPEC §1 rule 4 can be seen to work: a correct encoder never trips it.
-func decodeRecordWith(body []byte, reencode func(record) ([]byte, error)) (record, error) {
-	r, err := decodeFields(body)
+	r, err := decodeStrict(body)
 	if err != nil {
 		return nil, err
 	}
-	if verr := validate(r); verr != nil {
-		return nil, verr
+	if err := validate(r); err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+// decodeStrict applies SPEC §1 rules 1 to 4 and nothing of §2, so that a
+// verifier can run §2's rules in the order the spec lists them, chain rules
+// first (§7 step 4). The record it returns may still break a §2 rule.
+func decodeStrict(body []byte) (record, error) {
+	return decodeStrictWith(body, encodeFields)
+}
+
+// decodeStrictWith is decodeStrict with the re-encoder injected, so that the
+// check of SPEC §1 rule 4 can be seen to work: a correct encoder never trips it.
+func decodeStrictWith(body []byte, reencode func(record) ([]byte, error)) (record, error) {
+	r, err := decodeFields(body)
+	if err != nil {
+		return nil, err
 	}
 	again, err := reencode(r)
 	if err != nil {

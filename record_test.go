@@ -323,22 +323,22 @@ func TestForbiddenCodePoints(t *testing.T) {
 // re-encodes identically, so the check can only be exercised with an encoder
 // that disagrees with the decoder: the defect it exists to catch.
 //
-// Negative control: removing the bytes.Equal comparison in decodeRecordWith
+// Negative control: removing the bytes.Equal comparison in decodeStrictWith
 // made this fail.
 func TestReencodeMustBeByteIdentical(t *testing.T) {
 	body := unhex(t, goldenEntryHex)
 	skewed := func(r record) ([]byte, error) {
-		b, err := encodeRecord(r)
+		b, err := encodeFields(r)
 		if err != nil {
 			return nil, err
 		}
 		b[len(b)-1] ^= 1
 		return b, nil
 	}
-	if _, err := decodeRecordWith(body, skewed); !errors.Is(err, errNonCanonical) {
+	if _, err := decodeStrictWith(body, skewed); !errors.Is(err, errNonCanonical) {
 		t.Fatalf("decode = %v, want errNonCanonical", err)
 	}
-	if _, err := decodeRecordWith(body, encodeRecord); err != nil {
+	if _, err := decodeStrictWith(body, encodeFields); err != nil {
 		t.Fatalf("decode with the real encoder: %v", err)
 	}
 }
