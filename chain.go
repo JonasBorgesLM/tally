@@ -68,58 +68,72 @@ type trustedHead struct {
 	hash [32]byte
 }
 
+// chainState is the running state of SPEC §7 step 4 over a log read from leaf
+// 0: what the next record must agree with. Verify and Open share it, so the
+// writer reopens a log by exactly the verifier's rules.
+type chainState struct {
+	size     uint64 // leaves accepted so far
+	logID    [16]byte
+	origin   string
+	prevLeaf [32]byte
+	prevTime int64
+}
+
+// add checks body as the next leaf and, if it is valid, advances the state.
+// On a violation the state is unchanged.
+func (c *chainState) add(body []byte) *violation {
+	r, err := decodeStrict(body)
+	if err != nil {
+		return &violation{kind: decodeKind(err), seq: c.size, err: err}
+	}
+	if kind, err := checkChain(r, c.size, c.logID, c.prevLeaf, c.prevTime); err != nil {
+		return &violation{kind: kind, seq: c.size, err: err}
+	}
+	if err := validate(r); err != nil {
+		return &violation{kind: kindMalformedRecord, seq: c.size, err: err}
+	}
+	switch r := r.(type) {
+	case *genesis:
+		c.logID, c.origin, c.prevTime = r.logID, r.origin, r.createdAt
+	case *entry:
+		c.prevTime = r.recordedAt
+	}
+	c.prevLeaf = leafHash(body)
+	c.size++
+	return nil
+}
+
 // verifyFrames verifies a log held as concatenated frames from leaf 0. It
 // stops at the first violation (ADR-0016) and returns it with the size of the
 // verified prefix. head, if given, is compared with the leaf at size - 1, or
 // reports a truncation when the log is shorter and was read without violation.
 func verifyFrames(log []byte, head *trustedHead) (uint64, *violation) {
 	var (
-		size     uint64 // leaves verified so far
-		logID    [16]byte
-		prevLeaf [32]byte
-		prevTime int64
+		c        chainState
 		headSeen bool
 	)
-	for rest := log; len(rest) > 0 || size == 0; {
+	for rest := log; len(rest) > 0 || c.size == 0; {
 		body, next, err := readFrame(rest)
 		if err != nil {
-			return size, &violation{kind: kindMalformedRecord, seq: size, err: err}
+			return c.size, &violation{kind: kindMalformedRecord, seq: c.size, err: err}
 		}
 		rest = next
-
-		r, err := decodeStrict(body)
-		if err != nil {
-			return size, &violation{kind: decodeKind(err), seq: size, err: err}
+		if v := c.add(body); v != nil {
+			return c.size, v
 		}
-		if kind, err := checkChain(r, size, logID, prevLeaf, prevTime); err != nil {
-			return size, &violation{kind: kind, seq: size, err: err}
-		}
-		if err := validate(r); err != nil {
-			return size, &violation{kind: kindMalformedRecord, seq: size, err: err}
-		}
-
-		switch r := r.(type) {
-		case *genesis:
-			logID, prevTime = r.logID, r.createdAt
-		case *entry:
-			prevTime = r.recordedAt
-		}
-		prevLeaf = leafHash(body)
-		size++
-
-		if head != nil && head.size == size {
-			if prevLeaf != head.hash {
-				return size, &violation{kind: kindCheckpointMismatch, seq: size - 1,
+		if head != nil && head.size == c.size {
+			if c.prevLeaf != head.hash {
+				return c.size, &violation{kind: kindCheckpointMismatch, seq: c.size - 1,
 					err: errors.New("the trusted head differs from the stored leaf")}
 			}
 			headSeen = true
 		}
 	}
-	if head != nil && !headSeen && head.size > size {
-		return size, &violation{kind: kindTruncatedBelowCheckpoint, seq: size,
-			err: fmt.Errorf("the trusted head covers %d leaves, the log holds %d", head.size, size)}
+	if head != nil && !headSeen && head.size > c.size {
+		return c.size, &violation{kind: kindTruncatedBelowCheckpoint, seq: c.size,
+			err: fmt.Errorf("the trusted head covers %d leaves, the log holds %d", head.size, c.size)}
 	}
-	return size, nil
+	return c.size, nil
 }
 
 // decodeKind maps a strict-decoding failure to its §7.2 kind.

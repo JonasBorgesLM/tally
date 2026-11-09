@@ -83,8 +83,9 @@ for goos in linux darwin; do
   # --- 2. Nothing outside the module is reachable, tests included -------------
   #
   # stdlib-vendored golang.org/x paths report as standard, so .Standard is the
-  # resolver's own answer rather than a prefix guess.
-  ext=$(go list -deps -test -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./... | sed 's/ \[.*//; s/\.test$//' | grep -v "^$MOD\(/\|$\)" | sort -u)
+  # resolver's own answer rather than a prefix guess. The root's external test
+  # package is "$MOD"_test, which the module prefix alone does not match.
+  ext=$(go list -deps -test -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./... | sed 's/ \[.*//; s/\.test$//' | grep -v "^$MOD\(_test\)\?\(/\|$\)" | sort -u)
   if [ -z "$ext" ]; then
     pass "no non-standard package reachable, tests included (RNF-01)"
   else
