@@ -338,9 +338,7 @@ func (l *Log) commit(batch []*request) {
 	for _, r := range batch {
 		e := r.entry
 		e.logID, e.seq, e.prevHash = next.logID, next.size, next.prevLeaf
-		// recorded_at never goes back (RF-03): a clock that steps backwards is
-		// clamped to the previous value. Reporting it is #18.
-		e.recordedAt = max(l.cfg.clock.Now().UnixNano(), next.prevTime)
+		e.recordedAt = l.recordedAt(next.prevTime)
 		body, err := encodeRecord(e)
 		if err != nil {
 			// Validation already ran on the caller's goroutine, so this is a
@@ -376,6 +374,20 @@ func (l *Log) commit(batch []*request) {
 	}
 	// After the replies: the entries are durable whatever the Observer does.
 	l.observe(func(o Observer) { o.Batch(len(recs), latency) })
+}
+
+// recordedAt reads the Clock for the next entry. recorded_at never goes back
+// (RF-03, ADR-0007): a reading earlier than prev, the previous record's, is
+// clamped to prev and reported to the Observer, every time it happens, until
+// the clock catches up. The entry is recorded either way: an NTP step is no
+// reason to lose an event.
+func (l *Log) recordedAt(prev int64) int64 {
+	now := l.cfg.clock.Now().UnixNano()
+	if now >= prev {
+		return now
+	}
+	l.observe(func(o Observer) { o.ClockRegression(time.Duration(prev - now)) })
+	return prev
 }
 
 // refuseQueued answers every request still queued at Close.

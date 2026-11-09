@@ -29,7 +29,9 @@ type Observer interface {
 	// #37).
 	DiskSpace(free uint64)
 	// ClockRegression reports a Clock reading earlier than the last
-	// recorded_at, which was clamped (RF-03; #18).
+	// recorded_at, and by how much; the entry was recorded with the last value
+	// instead (RF-03, ADR-0007). It repeats for every entry until the clock
+	// catches up.
 	ClockRegression(by time.Duration)
 	// Poisoned reports the store error that poisoned the log (ADR-0009; #20).
 	Poisoned(err error)
