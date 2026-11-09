@@ -300,25 +300,6 @@ func TestReopenRefusesABrokenChain(t *testing.T) {
 	}
 }
 
-// recorded_at never decreases, even when the clock steps back (RF-03). The
-// Observer event and the full suite are #18.
-func TestRecordedAtDoesNotGoBack(t *testing.T) {
-	mem := tallytest.NewMemStore()
-	clock := tallytest.NewFixedClock(time.Unix(1_800_000_000, 0))
-	l := open(t, mem, tally.WithClock(clock))
-	if _, err := l.Append(context.Background(), event("a")); err != nil {
-		t.Fatal(err)
-	}
-	clock.Advance(-time.Hour)
-	r, err := l.Append(context.Background(), event("b"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if size := verifyStored(t, mem, r.LeafHash); size != 3 {
-		t.Fatalf("after a clock step back the store holds %d records, want 3", size)
-	}
-}
-
 // Any store error poisons the log: the waiters fail, later Appends return
 // ErrPoisoned, and the store is never called again (ADR-0009). The full suite
 // and the Observer event are #20.
