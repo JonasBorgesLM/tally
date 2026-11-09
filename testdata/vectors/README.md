@@ -33,19 +33,43 @@ Points that are easy to get wrong, which these vectors exercise:
   bytes standing for ciphertext and tag. They are **not** real AES-GCM output. Sealing vectors with
   a fixed DEK and nonce come with #44.
 
+## `keys.json`
+
+A **public test key**, named `example.com/log` (the origin of the genesis in `records.json`) and made
+from the seed `00 01 … 1f`. Anyone can sign with it: it is for checking implementations, never for a
+real log. `tallytest.TestSignerKey` and `tallytest.TestVerifierKey` are the same pair.
+
+| Key | What it is |
+| --- | --- |
+| `seed_hex` | The 32-byte Ed25519 seed. |
+| `key_id_hex` | `SHA-256(name ‖ 0x0A ‖ 0x01 ‖ public_key)[:4]` (SPEC §5.1). |
+| `verifier_key`, `signer_key` | The key in SPEC §5.3's two encodings. |
+| `notes[].note` | A whole signed note (SPEC §5.1) over `notes[].text`. Ed25519 is deterministic, so signing the same text with the same key gives these exact bytes. |
+
+Points that are easy to get wrong, which this key exercises:
+
+- **The public key's base64 contains `+`**, which is also the separator in a key string. Only the
+  separators before the key split it. A parser that splits on every `+` rejects this key, and
+  tally's own first one did.
+- **The signed message is the text including its final newline**, and excluding the blank line.
+
+The key id was also recomputed outside Go, and `golang.org/x/mod/sumdb/note` parses both keys,
+opens the note, and produces the same note bytes when signing the same text.
+
 ## Not here yet
 
-- **Keys and checkpoints** (SPEC §5) come with the signed-note implementation (#25, #26).
+- **Checkpoints** (SPEC §5.2) come with the checkpoint implementation (#26).
 - **Segment files** (SPEC §3) come with the file store (#33).
 
 ## How they are made
 
-`TestRecordVectors` in `vectors_test.go` compares these files with the encoder on every run, and never
-rewrites them. A suite that regenerated vectors would update them silently on a format break, which is
-the one change they exist to catch. To regenerate them after a deliberate format change:
+`TestRecordVectors` (`vectors_test.go`) and `TestKeyVectors` (`key_vectors_test.go`) compare these
+files with the implementation on every run, and never rewrite them. A suite that regenerated vectors
+would update them silently on a format break, which is the one change they exist to catch. To
+regenerate them after a deliberate format change:
 
 ```bash
-go test -run TestRecordVectors -write-vectors .
+go test -run 'TestRecordVectors|TestKeyVectors' -write-vectors .
 ```
 
 Then review the diff. A format change updates `docs/SPEC.md` and these vectors in the same pull request.
