@@ -145,7 +145,10 @@ type Signer interface {
     Sign(msg []byte) ([]byte, error)
 }
 
-type Clock interface{ Now() time.Time }
+type Clock interface {
+    Now() time.Time
+    After(d time.Duration) <-chan time.Time // the heartbeat timer; FixedClock fires it on Advance
+}
 
 // Observer methods are called from the writer goroutine and must not block.
 // None receives a payload (RF-16).

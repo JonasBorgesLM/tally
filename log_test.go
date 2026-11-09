@@ -11,17 +11,29 @@ import (
 	"time"
 
 	"github.com/JonasBorgesLM/tally"
+	"github.com/JonasBorgesLM/tally/internal/note"
 	"github.com/JonasBorgesLM/tally/tallytest"
 )
 
-// nameSigner is a Signer that only has a name: #17 needs no signature yet.
+// nameSigner is a Signer that only has a name. It serves the tests that fail
+// before anything is signed, such as an origin that is not a valid key name.
 type nameSigner string
 
 func (s nameSigner) Name() string                  { return string(s) }
 func (nameSigner) KeyHash() uint32                 { return 0 }
 func (nameSigner) Sign(msg []byte) ([]byte, error) { return nil, errors.New("not a real signer") }
 
-const testOrigin = nameSigner("example.com/log")
+// testOrigin is the published test key, named "example.com/log": Close signs a
+// checkpoint, so the log's signer must really sign.
+var testOrigin = mustSigner(tallytest.TestSignerKey)
+
+func mustSigner(skey string) tally.Signer {
+	s, err := note.NewSigner(skey)
+	if err != nil {
+		panic(err)
+	}
+	return s
+}
 
 var errDisk = errors.New("disk on fire")
 
@@ -96,8 +108,8 @@ func TestOpenWritesGenesis(t *testing.T) {
 		t.Fatalf("ID = %x, want the bytes read from the random source", got)
 	}
 	g := bodies(t, mem)[0]
-	if g[0] != 1 || g[1] != 0x01 || !bytes.Equal(g[2:18], id) || !bytes.HasSuffix(g, []byte(testOrigin)) {
-		t.Fatalf("genesis = %x: want version 1, type GENESIS, the log_id and origin %q", g, testOrigin)
+	if g[0] != 1 || g[1] != 0x01 || !bytes.Equal(g[2:18], id) || !bytes.HasSuffix(g, []byte(testOrigin.Name())) {
+		t.Fatalf("genesis = %x: want version 1, type GENESIS, the log_id and origin %q", g, testOrigin.Name())
 	}
 }
 

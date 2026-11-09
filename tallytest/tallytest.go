@@ -27,9 +27,10 @@ import (
 // refused, so a writer that assigns seq wrongly fails in tests rather than
 // writing a log that verifies as broken later.
 type MemStore struct {
-	mu      sync.Mutex
-	records []tally.Record
-	closed  bool
+	mu          sync.Mutex
+	records     []tally.Record
+	checkpoints []tally.SignedCheckpoint
+	closed      bool
 }
 
 // NewMemStore returns an empty MemStore.
@@ -102,11 +103,64 @@ func (s *MemStore) Close() error {
 	return nil
 }
 
+// PutCheckpoint stores a copy of cp. It is "durable" as soon as it returns.
+func (s *MemStore) PutCheckpoint(ctx context.Context, cp tally.SignedCheckpoint) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return tally.ErrClosed
+	}
+	s.checkpoints = append(s.checkpoints, slices.Clone(cp))
+	return nil
+}
+
+// Checkpoints yields copies of the stored checkpoints, oldest first, as a
+// snapshot.
+func (s *MemStore) Checkpoints(ctx context.Context) iter.Seq2[tally.SignedCheckpoint, error] {
+	return func(yield func(tally.SignedCheckpoint, error) bool) {
+		s.mu.Lock()
+		if s.closed {
+			s.mu.Unlock()
+			yield(nil, tally.ErrClosed)
+			return
+		}
+		snapshot := slices.Clone(s.checkpoints)
+		s.mu.Unlock()
+		for _, cp := range snapshot {
+			if err := ctx.Err(); err != nil {
+				yield(nil, err)
+				return
+			}
+			if !yield(slices.Clone(cp), nil) {
+				return
+			}
+		}
+	}
+}
+
+// CheckpointCount returns the number of stored checkpoints.
+func (s *MemStore) CheckpointCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.checkpoints)
+}
+
 // FixedClock is a tally.Clock that moves only when the test moves it, in
-// either direction. It is safe for concurrent use.
+// either direction. Its timers fire when a move reaches their deadline, so a
+// test drives a heartbeat by advancing the clock, never by sleeping. It is
+// safe for concurrent use.
 type FixedClock struct {
-	mu  sync.Mutex
-	now time.Time
+	mu     sync.Mutex
+	now    time.Time
+	timers []timer
+}
+
+type timer struct {
+	at time.Time
+	ch chan time.Time
 }
 
 // NewFixedClock returns a clock reading t.
@@ -121,17 +175,54 @@ func (c *FixedClock) Now() time.Time {
 	return c.now
 }
 
-// Set moves the clock to t, which may be earlier than its current reading.
+// After returns a channel that receives the clock's reading once the clock
+// has been moved to d past now or later. A d of zero or less fires at once.
+func (c *FixedClock) After(d time.Duration) <-chan time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	ch := make(chan time.Time, 1)
+	c.timers = append(c.timers, timer{at: c.now.Add(d), ch: ch})
+	c.fire()
+	return ch
+}
+
+// Timers returns how many timers are waiting to fire. A test uses it to know,
+// without sleeping, that the code under test has armed its timer.
+func (c *FixedClock) Timers() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.timers)
+}
+
+// Set moves the clock to t, which may be earlier than its current reading,
+// and fires every timer whose deadline it reaches.
 func (c *FixedClock) Set(t time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.now = t
+	c.fire()
 }
 
-// Advance moves the clock by d. A negative d steps it backwards, as a host
-// clock does after an NTP correction.
+// Advance moves the clock by d and fires every timer whose deadline it
+// reaches. A negative d steps it backwards, as a host clock does after an NTP
+// correction; no timer fires on a step back.
 func (c *FixedClock) Advance(d time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.now = c.now.Add(d)
+	c.fire()
+}
+
+// fire sends on, and forgets, every timer whose deadline has been reached.
+// Each channel has room for its one value, so this never blocks.
+func (c *FixedClock) fire() {
+	kept := c.timers[:0]
+	for _, t := range c.timers {
+		if c.now.Before(t.at) {
+			kept = append(kept, t)
+			continue
+		}
+		t.ch <- c.now
+	}
+	c.timers = kept
 }

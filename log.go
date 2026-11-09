@@ -55,6 +55,9 @@ type config struct {
 	observer   Observer
 
 	idempotencyWindow int
+
+	checkpointEntries uint64
+	checkpointPeriod  time.Duration
 }
 
 // Defaults. MaxDelay is RNF-03's provisional 2 ms; MaxBatch bounds the work
@@ -121,16 +124,21 @@ type hostClock struct{}
 // Now returns the host's time.
 func (hostClock) Now() time.Time { return time.Now() }
 
+// After is time.After.
+func (hostClock) After(d time.Duration) <-chan time.Time { return time.After(d) }
+
 // Log is a tamper-evident audit log. It is safe for concurrent use. One
 // goroutine, the writer, orders and stores entries (ADR-0008).
 type Log struct {
-	store Store
-	id    LogID
-	cfg   config
+	store  Store
+	signer Signer
+	id     LogID
+	cfg    config
 
-	reqs chan *request
-	quit chan struct{}
-	done chan struct{}
+	reqs   chan *request
+	cpReqs chan checkpointRequest
+	quit   chan struct{}
+	done   chan struct{}
 
 	// closed and senders make Close and Append agree on who may still
 	// enqueue: an Append registers as a sender only while the log is open,
@@ -142,12 +150,14 @@ type Log struct {
 
 	closeOnce sync.Once
 	closeErr  error
+	finalErr  error // the closed checkpoint's, set by the writer before done closes
 
 	observerPanics atomic.Uint64
 
 	// Owned by the writer goroutine once Open returns.
 	head   chainState
 	window *idWindow
+	lastCP lastCheckpoint
 	err    error // the error that poisoned the log, or nil
 }
 
@@ -179,6 +189,8 @@ func Open(ctx context.Context, s Store, signer Signer, opts ...Option) (*Log, er
 		maxPayload: defaultMaxPayload,
 
 		idempotencyWindow: defaultIdempotencyWindow,
+		checkpointEntries: defaultCheckpointEntries,
+		checkpointPeriod:  defaultCheckpointPeriod,
 	}
 	for _, o := range opts {
 		o(&cfg)
@@ -188,6 +200,8 @@ func Open(ctx context.Context, s Store, signer Signer, opts ...Option) (*Log, er
 		cfg:    cfg,
 		window: newIDWindow(cfg.idempotencyWindow),
 		reqs:   make(chan *request, cfg.maxBatch),
+		cpReqs: make(chan checkpointRequest),
+		signer: signer,
 		quit:   make(chan struct{}),
 		done:   make(chan struct{}),
 	}
@@ -228,7 +242,7 @@ func (l *Log) load(ctx context.Context, origin string) error {
 		if l.head.origin != origin {
 			return fmt.Errorf("tally: the log's origin is %q, the signer's name is %q", l.head.origin, origin)
 		}
-		return nil
+		return l.loadLastCheckpoint(ctx)
 	}
 
 	g := &genesis{createdAt: l.cfg.clock.Now().UnixNano(), origin: origin}
@@ -249,6 +263,7 @@ func (l *Log) load(ctx context.Context, origin string) error {
 	if _, v := l.head.add(body); v != nil {
 		return fmt.Errorf("tally: the genesis written does not verify: %w", v)
 	}
+	l.lastCP = lastCheckpoint{size: 1} // the entry trigger counts entries, not genesis
 	return nil
 }
 
@@ -307,7 +322,12 @@ func (l *Log) Append(ctx context.Context, ev Event) (Receipt, error) {
 
 // Close refuses new Appends, lets those already enqueueing finish, stops the
 // writer after the batch in flight, answers every queued Append with
-// ErrClosed, and closes the store. It is idempotent.
+// ErrClosed, signs a last checkpoint with state "closed" unless the log is
+// poisoned, and closes the store. It is idempotent.
+//
+// The closed checkpoint is what lets an honest restart produce no false
+// heartbeat alarm (ADR-0006). Close returns the error of signing or storing
+// it, joined with the store's Close error; the store is closed either way.
 func (l *Log) Close() error {
 	l.closeOnce.Do(func() {
 		l.mu.Lock()
@@ -316,7 +336,7 @@ func (l *Log) Close() error {
 		l.senders.Wait()
 		close(l.quit)
 		<-l.done
-		l.closeErr = l.store.Close()
+		l.closeErr = errors.Join(l.finalErr, l.store.Close())
 	})
 	return l.closeErr
 }
@@ -325,22 +345,61 @@ func (l *Log) Close() error {
 func (l *Log) writer() {
 	defer close(l.done)
 	batch := make([]*request, 0, l.cfg.maxBatch)
+
+	// The heartbeat: a checkpoint every period, even with no entries (RF-06).
+	var heartbeat <-chan time.Time
+	arm := func() {
+		if l.cfg.checkpointPeriod > 0 {
+			heartbeat = l.cfg.clock.After(l.cfg.checkpointPeriod)
+		}
+	}
+	arm()
+
 	for {
 		// quit first: once Close has asked, no new batch starts.
 		select {
 		case <-l.quit:
-			l.refuseQueued()
+			l.finish()
 			return
 		default:
 		}
 		select {
 		case <-l.quit:
-			l.refuseQueued()
+			l.finish()
 			return
 		case first := <-l.reqs:
 			batch = l.collect(append(batch[:0], first))
 			l.commit(batch)
+			if l.err == nil && l.dueByEntries() {
+				l.autoCheckpoint()
+			}
+		case <-heartbeat:
+			if l.err == nil {
+				l.autoCheckpoint()
+			}
+			arm()
+		case req := <-l.cpReqs:
+			cp, err := l.checkpoint(stateOpen)
+			req.reply <- checkpointReply{cp: cp, err: err}
 		}
+	}
+}
+
+// finish runs once, when Close has asked: it answers whatever is still queued
+// and signs the closed checkpoint, unless the log is poisoned.
+func (l *Log) finish() {
+	l.refuseQueued()
+	for {
+		select {
+		case req := <-l.cpReqs:
+			req.reply <- checkpointReply{err: ErrClosed}
+			continue
+		default:
+		}
+		break
+	}
+	if l.err == nil {
+		_, l.finalErr = l.checkpoint(stateClosed)
 	}
 }
 
@@ -455,15 +514,13 @@ func (l *Log) commit(batch []*request) {
 	// caller's: a caller giving up does not interrupt a write in progress.
 	start := time.Now()
 	if err := l.store.AppendBatch(context.Background(), recs); err != nil {
-		l.err = fmt.Errorf("%w: %w", ErrPoisoned, err)
+		l.poison(err)
 		for _, r := range accepted {
 			r.reply <- reply{err: l.err}
 		}
 		for _, rt := range retries {
 			rt.r.reply <- reply{err: l.err}
 		}
-		// Once: from here on commit answers ErrPoisoned before reaching this.
-		l.observe(func(o Observer) { o.Poisoned(err) })
 		return
 	}
 	latency := time.Since(start)
@@ -493,6 +550,13 @@ func (l *Log) recordedAt(prev int64) int64 {
 	}
 	l.observe(func(o Observer) { o.ClockRegression(time.Duration(prev - now)) })
 	return prev
+}
+
+// poison makes err final for the log (ADR-0009) and tells the Observer, once:
+// from here on the writer answers ErrPoisoned before reaching the store.
+func (l *Log) poison(err error) {
+	l.err = fmt.Errorf("%w: %w", ErrPoisoned, err)
+	l.observe(func(o Observer) { o.Poisoned(err) })
 }
 
 // refuseQueued answers every request still queued at Close.
