@@ -89,6 +89,32 @@ func WithRand(r io.Reader) Option {
 	return func(c *config) { c.rand = r }
 }
 
+// Limits are a deployment's size limits for what its writers record (RF-02).
+//
+// They apply to writers only, never to verifiers, and can only lower SPEC §6's
+// hard ceilings: a verifier accepts anything up to the ceiling, so a log
+// written under any Limits verifies everywhere.
+//
+// Only the payload limit is configurable. For event_id, action, resource and
+// actor_id, SPEC §6 sets the default equal to the ceiling (128, 128, 256 and
+// 256 bytes), so a limit could only reject events that are valid everywhere
+// else; those stay fixed.
+type Limits struct {
+	// MaxPayload is the largest payload, plain or sealed, in bytes. Zero or
+	// less means SPEC §6's default, 64 KiB. A value above the 16 MiB ceiling
+	// is honoured up to the ceiling, which still applies.
+	MaxPayload int
+}
+
+// WithLimits sets the writer's limits. The zero Limits means the defaults.
+func WithLimits(l Limits) Option {
+	return func(c *config) {
+		if l.MaxPayload > 0 {
+			c.maxPayload = l.MaxPayload
+		}
+	}
+}
+
 // hostClock is the default Clock, the host's.
 type hostClock struct{}
 
