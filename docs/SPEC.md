@@ -438,8 +438,12 @@ REQUIREMENTS is the one corrected. Every check in this document reports exactly 
 
 ## 8. Test vectors
 
-`testdata/vectors/` will hold keys in the §5.3 encodings, records, leaf hashes and checkpoints (#15).
-Sealing vectors need a fixed DEK and nonce as inputs, and are added with #44. Conformance to §5 is tested
+[`testdata/vectors/`](../testdata/vectors/README.md) holds the published vectors.
+[`records.json`](../testdata/vectors/records.json) is a genesis and four entries forming one chain,
+covering every `actor_kind`, `payload_kind` and `outcome`, each given as fields, stored bytes and leaf
+hash. Keys in the §5.3 encodings and checkpoints are added with the signed-note implementation (#25,
+#26), and segment files with the file store (#33). Sealing vectors need a fixed DEK and nonce as
+inputs, and are added with #44. Conformance to §5 is tested
 against `golang.org/x/mod/sumdb/note` (#30). That package accepts up to 100 signatures and no size limit,
 so the differential test expects tally to reject notes it accepts above §6's limits, and never the
 reverse.
