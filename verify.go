@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"iter"
 	"math"
 	"slices"
 	"strconv"
@@ -82,6 +83,40 @@ type VerifyOption func(*verifyConfig)
 type verifyConfig struct {
 	start       SignedCheckpoint
 	requireFull bool
+	anchor      AnchorReader
+	heartbeat   *heartbeat
+}
+
+// heartbeat is WithHeartbeat's input.
+type heartbeat struct {
+	interval, tolerance time.Duration
+	now                 time.Time
+}
+
+// WithAnchor adds the checkpoints read from an anchor (RF-09). They are the
+// ones that matter: a host attacker can rewrite every checkpoint it stores,
+// but not one it has already published to an anchor it cannot alter (RS-17).
+// An anchored checkpoint that disagrees with the log is ForkDetected rather
+// than CheckpointMismatch: the host showed the anchor another history.
+func WithAnchor(a AnchorReader) VerifyOption {
+	return func(c *verifyConfig) { c.anchor = a }
+}
+
+// WithHeartbeat checks the anchored checkpoints for gaps (SPEC §7 step 8). A
+// gap above interval + tolerance between two consecutive anchored
+// checkpoints, or between the last one and now, is HeartbeatGap, unless the
+// earlier one was signed by a clean Close (state "closed"). now comes from the
+// caller: the log's own clock is what is in question. It requires WithAnchor.
+//
+// A gap is evidence that the signer stopped, or that its checkpoints did not
+// reach the anchor. It is never evidence of which events are missing, nor its
+// absence of completeness: a host can keep signing heartbeats over a log it
+// is dropping entries from (T-15). The times are the signer's own claims
+// (ADR-0006); a gap is credible only if the anchor side records arrival.
+func WithHeartbeat(interval, tolerance time.Duration, now time.Time) VerifyOption {
+	return func(c *verifyConfig) {
+		c.heartbeat = &heartbeat{interval: interval, tolerance: tolerance, now: now}
+	}
 }
 
 // FromCheckpoint verifies incrementally (RF-08): from cp's head on, trusting
@@ -106,12 +141,22 @@ func WithRequireFullyAttested() VerifyOption {
 
 // checkpoint is an accepted checkpoint (SPEC §5.4 step 5).
 type checkpoint struct {
-	origin string
-	size   uint64
-	head   [32]byte
-	at     int64
-	closed bool
-	start  bool // the caller's start checkpoint
+	origin   string
+	size     uint64
+	head     [32]byte
+	at       int64
+	closed   bool
+	start    bool // the caller's start checkpoint
+	anchored bool // read from an anchor
+}
+
+// mismatchKind is SPEC §7.2's kind for a checkpoint whose head disagrees with
+// the log: a fork when the checkpoint came from an anchor.
+func mismatchKind(c checkpoint) FailureKind {
+	if c.anchored {
+		return ForkDetected
+	}
+	return CheckpointMismatch
 }
 
 // readCheckpoint applies SPEC §5.4. It returns the accepted checkpoint, or the
@@ -214,16 +259,32 @@ func Verify(ctx context.Context, src Source, keys Verifiers, opts ...VerifyOptio
 		cps = append(cps, c)
 		start = &cps[0]
 	}
-	for raw, err := range src.Checkpoints(ctx) {
-		if err != nil {
-			return nil, fmt.Errorf("tally: reading checkpoints: %w", err)
+	if cfg.heartbeat != nil && cfg.anchor == nil {
+		return nil, errors.New("tally: WithHeartbeat needs WithAnchor: a heartbeat is judged on anchored checkpoints")
+	}
+	sources := []struct {
+		seq      iter.Seq2[SignedCheckpoint, error]
+		anchored bool
+	}{{src.Checkpoints(ctx), false}}
+	if cfg.anchor != nil {
+		sources = append(sources, struct {
+			seq      iter.Seq2[SignedCheckpoint, error]
+			anchored bool
+		}{cfg.anchor.Checkpoints(ctx), true})
+	}
+	for _, s := range sources {
+		for raw, err := range s.seq {
+			if err != nil {
+				return nil, fmt.Errorf("tally: reading checkpoints: %w", err)
+			}
+			c, f := readCheckpoint(raw, keys)
+			if f != nil {
+				rep.Failures = append(rep.Failures, *f)
+				continue
+			}
+			c.anchored = s.anchored
+			cps = append(cps, c)
 		}
-		c, f := readCheckpoint(raw, keys)
-		if f != nil {
-			rep.Failures = append(rep.Failures, *f)
-			continue
-		}
-		cps = append(cps, c)
 	}
 
 	// Step 2: where reading starts. Incremental: at leaf s-1 of the start.
@@ -287,7 +348,7 @@ func Verify(ctx context.Context, src Source, keys Verifiers, opts ...VerifyOptio
 			if c.origin == chain.origin || chain.origin == "" {
 				switch {
 				case c.head != chain.prevLeaf:
-					rep.Failures = append(rep.Failures, Failure{Kind: CheckpointMismatch, Seq: c.size - 1,
+					rep.Failures = append(rep.Failures, Failure{Kind: mismatchKind(c), Seq: c.size - 1,
 						Note: "a checkpoint's head differs from the stored leaf"})
 				case c.at < chain.prevTime:
 					rep.Failures = append(rep.Failures, Failure{Kind: TimeRegression, Seq: c.size - 1,
@@ -328,7 +389,7 @@ func Verify(ctx context.Context, src Source, keys Verifiers, opts ...VerifyOptio
 			if c.head == boundary {
 				matched[i] = true
 			} else {
-				rep.Failures = append(rep.Failures, Failure{Kind: CheckpointMismatch, Seq: c.size - 1,
+				rep.Failures = append(rep.Failures, Failure{Kind: mismatchKind(c), Seq: c.size - 1,
 					Note: "a checkpoint's head differs from the first record's prev_hash"})
 			}
 		case c.size > rep.Size && broke == nil:
@@ -364,6 +425,11 @@ func Verify(ctx context.Context, src Source, keys Verifiers, opts ...VerifyOptio
 			rep.Failures = append(rep.Failures, Failure{Kind: PrunedWithoutTrustedCheckpoint, Seq: f,
 				Note: "the log starts above leaf 0 and no trusted checkpoint covers the start"})
 		}
+	}
+
+	// Step 8: the heartbeat, over the anchored checkpoints in step 6's order.
+	if hb := cfg.heartbeat; hb != nil {
+		rep.Failures = append(rep.Failures, heartbeatGaps(cps, origin, hb)...)
 	}
 
 	// Step 9.
@@ -411,4 +477,32 @@ func cmpI64(a, b int64) int {
 		return 1
 	}
 	return 0
+}
+
+// heartbeatGaps is SPEC §7 step 8. cps is sorted by size, then time.
+func heartbeatGaps(cps []checkpoint, origin string, hb *heartbeat) []Failure {
+	limit := hb.interval + hb.tolerance
+	var (
+		gaps []Failure
+		prev *checkpoint
+	)
+	for i := range cps {
+		c := &cps[i]
+		if !c.anchored || c.origin != origin {
+			continue
+		}
+		if prev != nil && !prev.closed && time.Duration(c.at-prev.at) > limit {
+			gaps = append(gaps, Failure{Kind: HeartbeatGap, Seq: c.size,
+				Note: fmt.Sprintf("%v between anchored checkpoints, over %v", time.Duration(c.at-prev.at), limit)})
+		}
+		prev = c
+	}
+	switch {
+	case prev == nil:
+		gaps = append(gaps, Failure{Kind: HeartbeatGap, Note: "no anchored checkpoint: the gap is unbounded"})
+	case !prev.closed && hb.now.Sub(time.Unix(0, prev.at)) > limit:
+		gaps = append(gaps, Failure{Kind: HeartbeatGap, Seq: prev.size,
+			Note: fmt.Sprintf("%v since the last anchored checkpoint, over %v", hb.now.Sub(time.Unix(0, prev.at)), limit)})
+	}
+	return gaps
 }
