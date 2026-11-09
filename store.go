@@ -49,7 +49,13 @@ type Store interface {
 
 // Clock is the log's source of recorded_at (RF-03). It is injectable so that
 // tests control time (RNF-11). The log keeps recorded_at monotonic itself, so
-// a Clock may step backwards; that is reported, not trusted (ADR-0007).
+// a Clock may step backwards: the reading is clamped to the previous
+// recorded_at and reported through Observer.ClockRegression (ADR-0007).
+//
+// Monotonic is not proof of real time (T-14). recorded_at is the host's claim:
+// a host whose clock is wrong, or whose owner sets it, records wrong times in
+// order. Only an outside timestamp, such as an anchored checkpoint's arrival,
+// bounds it.
 type Clock interface {
 	Now() time.Time
 }
