@@ -201,7 +201,7 @@ anchor already has (RS-17).
 | **RF-14** | `filestore.Prune(cp)` removes only segments wholly below a checkpoint and writes a prune marker; later verification requires that checkpoint as trusted |
 | **RF-15** | `export` produces JSONL or an **audit bundle** (segments, checkpoints, public keys, quarantined bytes and a manifest of hashes) |
 | **RF-16** | `Observer`, with no external dependency: appends, batch size, fsync latency, anchor publication, disk space, clock regression, poisoning, recovery. It never receives payload, and must not block |
-| **RF-17** | A repeated `EventID` whose metadata differs (actor, action, resource, outcome, payload kind, and the bytes when plain) returns `ErrEventConflict` and records nothing. Sealed bytes are excluded, because a random nonce makes each retry differ |
+| **RF-17** | A repeated `EventID` whose metadata differs (actor, action, resource, outcome, payload kind, the subject a sealed payload is for, and the bytes when plain) returns `ErrEventConflict` and records nothing. Sealed bytes are excluded, because a random nonce makes each retry differ; the subject is not random, so it is compared |
 | **RF-18** | `Report` separates `AttestedSize` from `UnattestedEntries`; `OK()` speaks only to what was checked; `WithRequireFullyAttested` makes an unattested tail a failure |
 | **RF-19** | The publish queue is bounded. On overflow it drops the oldest checkpoint other than the newest, counts it and alarms. `Close` flushes with a deadline |
 | **RF-20** | Recovery moves truncated bytes to a quarantine file and reports them; it never deletes them, and never truncates below the last local checkpoint |

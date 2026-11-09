@@ -53,6 +53,8 @@ type config struct {
 	rand       io.Reader
 	maxPayload int
 	observer   Observer
+
+	idempotencyWindow int
 }
 
 // Defaults. MaxDelay is RNF-03's provisional 2 ms; MaxBatch bounds the work
@@ -118,8 +120,9 @@ type Log struct {
 	observerPanics atomic.Uint64
 
 	// Owned by the writer goroutine once Open returns.
-	head chainState
-	err  error // the error that poisoned the log, or nil
+	head   chainState
+	window *idWindow
+	err    error // the error that poisoned the log, or nil
 }
 
 // request is one Append on its way to the writer.
@@ -148,16 +151,19 @@ func Open(ctx context.Context, s Store, signer Signer, opts ...Option) (*Log, er
 		clock:      hostClock{},
 		rand:       rand.Reader,
 		maxPayload: defaultMaxPayload,
+
+		idempotencyWindow: defaultIdempotencyWindow,
 	}
 	for _, o := range opts {
 		o(&cfg)
 	}
 	l := &Log{
-		store: s,
-		cfg:   cfg,
-		reqs:  make(chan *request, cfg.maxBatch),
-		quit:  make(chan struct{}),
-		done:  make(chan struct{}),
+		store:  s,
+		cfg:    cfg,
+		window: newIDWindow(cfg.idempotencyWindow),
+		reqs:   make(chan *request, cfg.maxBatch),
+		quit:   make(chan struct{}),
+		done:   make(chan struct{}),
 	}
 	if err := l.load(ctx, signer.Name()); err != nil {
 		return nil, err
@@ -179,8 +185,17 @@ func (l *Log) load(ctx context.Context, origin string) error {
 		if r.Seq != l.head.size {
 			return fmt.Errorf("tally: the store returned seq %d at leaf %d", r.Seq, l.head.size)
 		}
-		if v := l.head.add(r.Body); v != nil {
+		rec, v := l.head.add(r.Body)
+		if v != nil {
 			return fmt.Errorf("tally: the stored log does not verify: %w", v)
+		}
+		// Rebuild the idempotency window from the same read (RF-04).
+		if e, ok := rec.(*entry); ok {
+			fp, err := fingerprint(e)
+			if err != nil {
+				return fmt.Errorf("tally: fingerprinting stored entry %d: %w", e.seq, err)
+			}
+			l.window.add(string(e.eventID), seen{seq: e.seq, leaf: l.head.prevLeaf, fingerprint: fp})
 		}
 	}
 	if l.head.size > 0 {
@@ -205,7 +220,7 @@ func (l *Log) load(ctx context.Context, origin string) error {
 	if err := l.store.AppendBatch(ctx, []Record{{Seq: 0, Body: body}}); err != nil {
 		return fmt.Errorf("tally: writing the genesis: %w", err)
 	}
-	if v := l.head.add(body); v != nil {
+	if _, v := l.head.add(body); v != nil {
 		return fmt.Errorf("tally: the genesis written does not verify: %w", v)
 	}
 	return nil
@@ -334,9 +349,46 @@ func (l *Log) commit(batch []*request) {
 
 	next := l.head
 	recs := make([]Record, 0, len(batch))
-	accepted := batch[:0]
+	fps := make([][32]byte, 0, len(batch))
+	accepted := make([]*request, 0, len(batch))
+	// Retries of an entry earlier in this same batch: they are answered with
+	// its receipt once it is durable, never before (RF-01).
+	type retryOf struct {
+		r *request
+		i int // index into recs
+	}
+	var retries []retryOf
+	inBatch := make(map[string]int, len(batch))
+
 	for _, r := range batch {
 		e := r.entry
+		// RF-04, RF-17: a retried EventID gets the original receipt, a reused
+		// one with other metadata is refused, and neither is recorded.
+		id := string(e.eventID)
+		fp, err := fingerprint(e)
+		if err != nil {
+			// Validation already ran on the caller's goroutine, so this is a
+			// bug; the entry is refused rather than compared on a bad hash.
+			r.reply <- reply{err: fmt.Errorf("tally: fingerprinting a validated entry: %w", err)}
+			continue
+		}
+		if s, ok := l.window.get(id); ok {
+			if s.fingerprint != fp {
+				r.reply <- reply{err: ErrEventConflict}
+			} else {
+				r.reply <- reply{receipt: Receipt{Seq: s.seq, LeafHash: s.leaf, Duplicate: true}}
+			}
+			continue
+		}
+		if i, ok := inBatch[id]; ok && l.window.size > 0 {
+			if fps[i] != fp {
+				r.reply <- reply{err: ErrEventConflict}
+			} else {
+				retries = append(retries, retryOf{r: r, i: i})
+			}
+			continue
+		}
+
 		e.logID, e.seq, e.prevHash = next.logID, next.size, next.prevLeaf
 		e.recordedAt = l.recordedAt(next.prevTime)
 		body, err := encodeRecord(e)
@@ -346,11 +398,13 @@ func (l *Log) commit(batch []*request) {
 			r.reply <- reply{err: fmt.Errorf("tally: encoding a validated entry: %w", err)}
 			continue
 		}
-		if v := next.add(body); v != nil {
+		if _, v := next.add(body); v != nil {
 			r.reply <- reply{err: fmt.Errorf("tally: a chained entry does not verify: %w", v)}
 			continue
 		}
+		inBatch[id] = len(recs)
 		recs = append(recs, Record{Seq: e.seq, Body: body})
+		fps = append(fps, fp)
 		accepted = append(accepted, r)
 	}
 	if len(recs) == 0 {
@@ -365,12 +419,21 @@ func (l *Log) commit(batch []*request) {
 		for _, r := range accepted {
 			r.reply <- reply{err: l.err}
 		}
+		for _, rt := range retries {
+			rt.r.reply <- reply{err: l.err}
+		}
 		return
 	}
 	latency := time.Since(start)
 	l.head = next
+	leaves := make([][32]byte, len(recs))
 	for i, r := range accepted {
-		r.reply <- reply{receipt: Receipt{Seq: recs[i].Seq, LeafHash: leafHash(recs[i].Body)}}
+		leaves[i] = leafHash(recs[i].Body)
+		l.window.add(string(r.entry.eventID), seen{seq: recs[i].Seq, leaf: leaves[i], fingerprint: fps[i]})
+		r.reply <- reply{receipt: Receipt{Seq: recs[i].Seq, LeafHash: leaves[i]}}
+	}
+	for _, rt := range retries {
+		rt.r.reply <- reply{receipt: Receipt{Seq: recs[rt.i].Seq, LeafHash: leaves[rt.i], Duplicate: true}}
 	}
 	// After the replies: the entries are durable whatever the Observer does.
 	l.observe(func(o Observer) { o.Batch(len(recs), latency) })
