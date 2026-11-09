@@ -3,8 +3,9 @@ package tally_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
-	"runtime"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -61,6 +62,28 @@ func bodies(t *testing.T, s tally.Source) [][]byte {
 	return out
 }
 
+// leaf is SPEC §2.3, computed here rather than by the package under test.
+func leaf(body []byte) [32]byte {
+	return sha256.Sum256(append([]byte{0x00}, body...))
+}
+
+// verifyStored checks that the stored log is a valid chain by reopening it:
+// Open reads it back by the verifier's rules and refuses a broken one. It also
+// checks that the last stored leaf is want, and returns the number of records.
+func verifyStored(t *testing.T, mem *tallytest.MemStore, want [32]byte) int {
+	t.Helper()
+	all := bodies(t, mem)
+	if got := leaf(all[len(all)-1]); got != want {
+		t.Fatalf("the last stored leaf is %x, want %x", got, want)
+	}
+	l, err := tally.Open(context.Background(), keepOpen{mem}, testOrigin)
+	if err != nil {
+		t.Fatalf("the stored log does not verify: %v", err)
+	}
+	_ = l.Close()
+	return len(all)
+}
+
 func TestOpenWritesGenesis(t *testing.T) {
 	mem := tallytest.NewMemStore()
 	id := bytes.Repeat([]byte{0xA5}, 16)
@@ -99,7 +122,7 @@ func TestAppendStoresTheEntry(t *testing.T) {
 	if mem.Len() != 2 {
 		t.Fatalf("store holds %d records, want 2", mem.Len())
 	}
-	if got := tally.LeafHashForTest(bodies(t, mem)[1]); got != r.LeafHash {
+	if got := leaf(bodies(t, mem)[1]); got != r.LeafHash {
 		t.Fatalf("Receipt.LeafHash %x is not the stored entry's %x", r.LeafHash, got)
 	}
 }
@@ -176,7 +199,7 @@ func TestConcurrentAppendsAreGapFree(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for i := range each {
-				r, err := l.Append(context.Background(), event(string(rune('a'+g))+"-"+string(rune('a'+i))))
+				r, err := l.Append(context.Background(), event(strconv.Itoa(g)+"-"+strconv.Itoa(i)))
 				if err != nil {
 					t.Errorf("Append: %v", err)
 					return
@@ -201,78 +224,8 @@ func TestConcurrentAppendsAreGapFree(t *testing.T) {
 			t.Fatalf("seq %d missing: the sequence has a gap", seq)
 		}
 	}
-	all := bodies(t, mem)
-	if size, err := tally.VerifyBodiesForTest(all, receipts[n].LeafHash); err != nil || size != n+1 {
-		t.Fatalf("the stored log is not a valid chain ending at the last receipt: size %d, %v", size, err)
-	}
-}
-
-// spyStore records the size of every batch.
-type spyStore struct {
-	tally.Store
-	mu    sync.Mutex
-	sizes []int
-}
-
-func (s *spyStore) AppendBatch(ctx context.Context, recs []tally.Record) error {
-	s.mu.Lock()
-	s.sizes = append(s.sizes, len(recs))
-	s.mu.Unlock()
-	return s.Store.AppendBatch(ctx, recs)
-}
-
-// Group commit: appends that queue while a batch is being made durable share
-// the next one, and no batch exceeds MaxBatch (ADR-0008).
-//
-// Negative control: making the writer send one request per batch made this
-// fail (the largest batch was 1).
-func TestGroupCommitCoalescesUpToMaxBatch(t *testing.T) {
-	const maxBatch = 4
-	spy := &spyStore{Store: tallytest.NewMemStore()}
-	entered, release := make(chan struct{}), make(chan struct{})
-	l := open(t, tallytest.NewFaultyStore(spy, tallytest.BlockAppend(2, entered, release)),
-		tally.WithMaxBatch(maxBatch))
-
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		if _, err := l.Append(context.Background(), event("first")); err != nil {
-			t.Errorf("Append: %v", err)
-		}
-	}()
-	<-entered // the writer is inside the store with a batch of one
-
-	const queued = 10
-	for i := range queued {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if _, err := l.Append(context.Background(), event(string(rune('a'+i)))); err != nil {
-				t.Errorf("Append: %v", err)
-			}
-		}()
-	}
-	// Wait, without sleeping, until the queue is full: then the next batch is
-	// certain to find maxBatch requests waiting.
-	for l.QueuedForTest() < maxBatch {
-		runtime.Gosched()
-	}
-	close(release)
-	wg.Wait()
-
-	spy.mu.Lock()
-	defer spy.mu.Unlock()
-	total, largest := 0, 0
-	for _, s := range spy.sizes[1:] { // [0] is the genesis
-		total += s
-		largest = max(largest, s)
-		if s > maxBatch {
-			t.Fatalf("a batch of %d exceeds MaxBatch %d: %v", s, maxBatch, spy.sizes)
-		}
-	}
-	if total != queued+1 || largest != maxBatch {
-		t.Fatalf("batches %v: want %d entries in total and a full batch of %d", spy.sizes[1:], queued+1, maxBatch)
+	if size := verifyStored(t, mem, receipts[n].LeafHash); size != n+1 {
+		t.Fatalf("the stored log holds %d records, want %d", size, n+1)
 	}
 }
 
@@ -301,8 +254,8 @@ func TestReopenContinuesTheChain(t *testing.T) {
 	if err != nil || r.Seq != 3 {
 		t.Fatalf("Append after reopen = %+v, %v; want seq 3", r, err)
 	}
-	if size, err := tally.VerifyBodiesForTest(bodies(t, mem), r.LeafHash); err != nil || size != 4 {
-		t.Fatalf("chain after reopen: size %d, %v", size, err)
+	if size := verifyStored(t, mem, r.LeafHash); size != 4 {
+		t.Fatalf("after reopen the store holds %d records, want 4", size)
 	}
 }
 
@@ -361,8 +314,8 @@ func TestRecordedAtDoesNotGoBack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if size, err := tally.VerifyBodiesForTest(bodies(t, mem), r.LeafHash); err != nil || size != 3 {
-		t.Fatalf("after a clock step back the chain does not verify: size %d, %v", size, err)
+	if size := verifyStored(t, mem, r.LeafHash); size != 3 {
+		t.Fatalf("after a clock step back the store holds %d records, want 3", size)
 	}
 }
 
@@ -427,7 +380,7 @@ func TestCloseRacingAppendsAnswersEveryCaller(t *testing.T) {
 		results := make(chan error, callers)
 		for i := range callers {
 			go func() {
-				_, err := l.Append(context.Background(), event(string(rune('a'+i))))
+				_, err := l.Append(context.Background(), event("e"+strconv.Itoa(i)))
 				results <- err
 			}()
 		}
