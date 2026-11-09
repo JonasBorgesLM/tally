@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -51,6 +52,7 @@ type config struct {
 	clock      Clock
 	rand       io.Reader
 	maxPayload int
+	observer   Observer
 }
 
 // Defaults. MaxDelay is RNF-03's provisional 2 ms; MaxBatch bounds the work
@@ -112,6 +114,8 @@ type Log struct {
 
 	closeOnce sync.Once
 	closeErr  error
+
+	observerPanics atomic.Uint64
 
 	// Owned by the writer goroutine once Open returns.
 	head chainState
@@ -357,6 +361,7 @@ func (l *Log) commit(batch []*request) {
 
 	// No reply before this returns (RF-01). The writer's context is not the
 	// caller's: a caller giving up does not interrupt a write in progress.
+	start := time.Now()
 	if err := l.store.AppendBatch(context.Background(), recs); err != nil {
 		l.err = fmt.Errorf("%w: %w", ErrPoisoned, err)
 		for _, r := range accepted {
@@ -364,10 +369,13 @@ func (l *Log) commit(batch []*request) {
 		}
 		return
 	}
+	latency := time.Since(start)
 	l.head = next
 	for i, r := range accepted {
 		r.reply <- reply{receipt: Receipt{Seq: recs[i].Seq, LeafHash: leafHash(recs[i].Body)}}
 	}
+	// After the replies: the entries are durable whatever the Observer does.
+	l.observe(func(o Observer) { o.Batch(len(recs), latency) })
 }
 
 // refuseQueued answers every request still queued at Close.

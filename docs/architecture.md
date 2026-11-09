@@ -48,6 +48,7 @@ func Open(ctx context.Context, s Store, signer Signer, opts ...Option) (*Log, er
 func (l *Log) Append(ctx context.Context, ev Event) (Receipt, error)
 func (l *Log) Checkpoint(ctx context.Context) (SignedCheckpoint, error)
 func (l *Log) ID() LogID
+func (l *Log) ObserverPanics() uint64 // ADR-0017: a panicking Observer is recovered and counted
 func (l *Log) Close() error
 
 type Receipt struct {
