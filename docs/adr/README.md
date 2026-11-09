@@ -32,6 +32,7 @@ when M1 to M6 implement it gets an amendment.
 | [`0014`](0014-verifier-supply-chain.md) | The verifier's release is reproducible, signed and attested | Accepted | — |
 | [`0015`](0015-signer-in-process-behind-an-interface.md) | The signer runs in process in the MVP, behind an interface | Accepted | — |
 | [`0016`](0016-verifier-stops-at-first-broken-record.md) | The verifier stops at the first broken record, and judges checkpoints only against the prefix it verified | Accepted | — |
+| [`0017`](0017-observer-panics-are-recovered.md) | A panicking Observer is recovered, its event dropped, and the panic counted | Accepted | — |
 
 ## Reopening criteria on the record
 
