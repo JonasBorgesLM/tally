@@ -254,3 +254,82 @@ var (
 	_ tally.Store = (*FaultyStore)(nil)
 	_ tally.Clock = (*FixedClock)(nil)
 )
+
+// A timer fires when a move of the clock reaches its deadline, and not
+// before; a step back fires nothing.
+//
+// Negative control: firing timers in After regardless of their deadline made
+// this fail.
+func TestFixedClockTimers(t *testing.T) {
+	c := NewFixedClock(time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC))
+	ch := c.After(time.Minute)
+	if c.Timers() != 1 {
+		t.Fatalf("Timers = %d, want 1", c.Timers())
+	}
+	c.Advance(59 * time.Second)
+	c.Advance(-time.Hour)
+	select {
+	case <-ch:
+		t.Fatal("the timer fired before its deadline")
+	default:
+	}
+	c.Set(time.Date(2026, 11, 10, 12, 1, 0, 0, time.UTC))
+	select {
+	case at := <-ch:
+		if !at.Equal(time.Date(2026, 11, 10, 12, 1, 0, 0, time.UTC)) {
+			t.Fatalf("fired with %v", at)
+		}
+	default:
+		t.Fatal("the timer did not fire at its deadline")
+	}
+	if c.Timers() != 0 {
+		t.Fatalf("Timers = %d after firing, want 0", c.Timers())
+	}
+	select {
+	case <-c.After(0):
+	default:
+		t.Fatal("After(0) did not fire at once")
+	}
+}
+
+func TestMemStoreCheckpoints(t *testing.T) {
+	s := NewMemStore()
+	ctx := context.Background()
+	in := tally.SignedCheckpoint("cp one\n")
+	if err := s.PutCheckpoint(ctx, in); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutCheckpoint(ctx, tally.SignedCheckpoint("cp two\n")); err != nil {
+		t.Fatal(err)
+	}
+	in[0] = 'X' // the store holds a copy
+	var got []string
+	for cp, err := range s.Checkpoints(ctx) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, string(cp))
+	}
+	if len(got) != 2 || got[0] != "cp one\n" || got[1] != "cp two\n" || s.CheckpointCount() != 2 {
+		t.Fatalf("Checkpoints = %q", got)
+	}
+	_ = s.Close()
+	if err := s.PutCheckpoint(ctx, in); !errors.Is(err, tally.ErrClosed) {
+		t.Fatalf("PutCheckpoint after Close = %v, want ErrClosed", err)
+	}
+}
+
+func TestFailPutCheckpoint(t *testing.T) {
+	mem := NewMemStore()
+	s := NewFaultyStore(mem, FailPutCheckpoint(2, errDisk))
+	ctx := context.Background()
+	if err := s.PutCheckpoint(ctx, tally.SignedCheckpoint("a\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutCheckpoint(ctx, tally.SignedCheckpoint("b\n")); !errors.Is(err, errDisk) {
+		t.Fatalf("call 2 = %v, want errDisk", err)
+	}
+	if mem.CheckpointCount() != 1 || s.PutCheckpointCalls() != 2 || s.AppendCalls() != 0 {
+		t.Fatalf("stored %d, PutCheckpoint calls %d, AppendBatch calls %d", mem.CheckpointCount(), s.PutCheckpointCalls(), s.AppendCalls())
+	}
+}

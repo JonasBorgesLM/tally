@@ -8,14 +8,15 @@ import (
 	"github.com/JonasBorgesLM/tally"
 )
 
-// Fault is a misbehaviour that a FaultyStore applies to one AppendBatch call.
-// Build one with FailAppend, TearAppend or BlockAppend.
+// Fault is a misbehaviour that a FaultyStore applies to one call. Build one
+// with FailAppend, TearAppend, BlockAppend or FailPutCheckpoint.
 type Fault struct {
-	call    int
-	keep    int // records of the batch written before failing, for a tear
-	err     error
-	entered chan<- struct{}
-	release <-chan struct{}
+	checkpoint bool // a PutCheckpoint call, not an AppendBatch call
+	call       int
+	keep       int // records of the batch written before failing, for a tear
+	err        error
+	entered    chan<- struct{}
+	release    <-chan struct{}
 }
 
 // FailAppend makes the call-th AppendBatch (counting from 1) write nothing and
@@ -39,23 +40,35 @@ func BlockAppend(call int, entered chan<- struct{}, release <-chan struct{}) Fau
 	return Fault{call: call, entered: entered, release: release}
 }
 
+// FailPutCheckpoint makes the call-th PutCheckpoint (counting from 1) store
+// nothing and return err. The Log must treat it as poisoning (ADR-0009).
+func FailPutCheckpoint(call int, err error) Fault {
+	return Fault{checkpoint: true, call: call, err: err}
+}
+
 // FaultyStore wraps a tally.Store and applies Faults to chosen AppendBatch
 // calls. Every other call goes to the inner store unchanged. It is safe for
 // concurrent use.
 type FaultyStore struct {
 	inner tally.Store
 
-	mu     sync.Mutex
-	calls  int
-	faults map[int]Fault
+	mu       sync.Mutex
+	calls    int
+	cpCalls  int
+	faults   map[int]Fault
+	cpFaults map[int]Fault
 }
 
 // NewFaultyStore wraps inner. Each fault applies to the call it names; two
 // faults for one call keep the last.
 func NewFaultyStore(inner tally.Store, faults ...Fault) *FaultyStore {
-	s := &FaultyStore{inner: inner, faults: make(map[int]Fault, len(faults))}
+	s := &FaultyStore{inner: inner, faults: map[int]Fault{}, cpFaults: map[int]Fault{}}
 	for _, f := range faults {
-		s.faults[f.call] = f
+		if f.checkpoint {
+			s.cpFaults[f.call] = f
+		} else {
+			s.faults[f.call] = f
+		}
 	}
 	return s
 }
@@ -104,6 +117,32 @@ func (s *FaultyStore) AppendCalls() int {
 // Records reads from the inner store.
 func (s *FaultyStore) Records(ctx context.Context, fromSeq uint64) iter.Seq2[tally.Record, error] {
 	return s.inner.Records(ctx, fromSeq)
+}
+
+// PutCheckpoint counts the call, applies its fault if there is one, and
+// otherwise stores in the inner store.
+func (s *FaultyStore) PutCheckpoint(ctx context.Context, cp tally.SignedCheckpoint) error {
+	s.mu.Lock()
+	s.cpCalls++
+	f, faulty := s.cpFaults[s.cpCalls]
+	s.mu.Unlock()
+	if faulty {
+		return f.err
+	}
+	return s.inner.PutCheckpoint(ctx, cp)
+}
+
+// PutCheckpointCalls returns how many times PutCheckpoint has been called,
+// faults included.
+func (s *FaultyStore) PutCheckpointCalls() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.cpCalls
+}
+
+// Checkpoints reads from the inner store.
+func (s *FaultyStore) Checkpoints(ctx context.Context) iter.Seq2[tally.SignedCheckpoint, error] {
+	return s.inner.Checkpoints(ctx)
 }
 
 // Close closes the inner store.

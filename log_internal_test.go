@@ -1,6 +1,7 @@
 package tally
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"iter"
@@ -11,17 +12,27 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/JonasBorgesLM/tally/internal/note"
 )
 
 // This file is an internal test because it reads the writer's queue, which an
 // external test cannot see. It cannot import tallytest (an import cycle), so
 // it carries its own small store.
 
-type testSigner string
-
-func (s testSigner) Name() string              { return string(s) }
-func (testSigner) KeyHash() uint32             { return 0 }
-func (testSigner) Sign([]byte) ([]byte, error) { return nil, errors.New("not a real signer") }
+// testSigner returns a real signer named name, from a fixed seed: Close signs
+// a checkpoint, so a signer that cannot sign would fail every test.
+func testSigner(name string) Signer {
+	skey, _, err := note.GenerateKey(bytes.NewReader(make([]byte, 32)), name)
+	if err != nil {
+		panic(err)
+	}
+	s, err := note.NewSigner(skey)
+	if err != nil {
+		panic(err)
+	}
+	return s
+}
 
 // batchStore records every batch's size, and blocks the call-th AppendBatch
 // until release is closed, after sending on entered.
@@ -35,6 +46,7 @@ type batchStore struct {
 	calls int
 	sizes []int
 	recs  []Record
+	cps   []SignedCheckpoint
 }
 
 func (s *batchStore) AppendBatch(_ context.Context, recs []Record) error {
@@ -72,6 +84,28 @@ func (s *batchStore) Records(_ context.Context, from uint64) iter.Seq2[Record, e
 }
 
 func (s *batchStore) Close() error { return nil }
+
+// PutCheckpoint keeps cp; this store never fails one.
+func (s *batchStore) PutCheckpoint(_ context.Context, cp SignedCheckpoint) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cps = append(s.cps, slices.Clone(cp))
+	return nil
+}
+
+// Checkpoints yields the kept checkpoints.
+func (s *batchStore) Checkpoints(context.Context) iter.Seq2[SignedCheckpoint, error] {
+	return func(yield func(SignedCheckpoint, error) bool) {
+		s.mu.Lock()
+		cps := slices.Clone(s.cps)
+		s.mu.Unlock()
+		for _, cp := range cps {
+			if !yield(cp, nil) {
+				return
+			}
+		}
+	}
+}
 
 // unblock releases the held AppendBatch. It is safe to call more than once,
 // so a test registers it as a cleanup and also calls it where it means to.
