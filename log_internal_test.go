@@ -28,6 +28,7 @@ func (testSigner) Sign([]byte) ([]byte, error) { return nil, errors.New("not a r
 type batchStore struct {
 	block            int
 	fail             int // the call that fails, writing nothing
+	releaseOnce      sync.Once
 	entered, release chan struct{}
 
 	mu    sync.Mutex
@@ -57,11 +58,28 @@ func (s *batchStore) AppendBatch(_ context.Context, recs []Record) error {
 	return nil
 }
 
-func (s *batchStore) Records(context.Context, uint64) iter.Seq2[Record, error] {
-	return func(func(Record, error) bool) {} // always empty: Open writes a genesis
+func (s *batchStore) Records(_ context.Context, from uint64) iter.Seq2[Record, error] {
+	return func(yield func(Record, error) bool) {
+		s.mu.Lock()
+		recs := slices.Clone(s.recs)
+		s.mu.Unlock()
+		for _, r := range recs {
+			if r.Seq >= from && !yield(r, nil) {
+				return
+			}
+		}
+	}
 }
 
 func (s *batchStore) Close() error { return nil }
+
+// unblock releases the held AppendBatch. It is safe to call more than once,
+// so a test registers it as a cleanup and also calls it where it means to.
+func (s *batchStore) unblock() {
+	if s.release != nil {
+		s.releaseOnce.Do(func() { close(s.release) })
+	}
+}
 
 // Group commit: appends that queue while a batch is being made durable share
 // the next one, and no batch exceeds MaxBatch (ADR-0008).
@@ -76,6 +94,7 @@ func TestGroupCommitCoalescesUpToMaxBatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = l.Close() })
+	t.Cleanup(s.unblock) // runs first: a test failing while the store is held must not hang Close
 
 	ev := func(id string) Event {
 		return Event{ID: EventID(id), OccurredAt: time.Unix(1, 0), Actor: System(),
@@ -106,7 +125,7 @@ func TestGroupCommitCoalescesUpToMaxBatch(t *testing.T) {
 	for len(l.reqs) < maxBatch {
 		runtime.Gosched()
 	}
-	close(s.release)
+	s.unblock()
 	wg.Wait()
 
 	s.mu.Lock()
@@ -139,6 +158,7 @@ func TestAnInBatchRetryIsAnsweredOnlyOnceDurable(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = l.Close() })
+	t.Cleanup(s.unblock) // runs first: a test failing while the store is held must not hang Close
 	ev := func(id string) Event {
 		return Event{ID: EventID(id), OccurredAt: time.Unix(1, 0), Actor: System(),
 			Action: "user.login", Outcome: OutcomeSuccess}
@@ -162,7 +182,7 @@ func TestAnInBatchRetryIsAnsweredOnlyOnceDurable(t *testing.T) {
 	for len(l.reqs) < 2 {
 		runtime.Gosched()
 	}
-	close(s.release) // batch 2 completes; batch 3 holds both retries, and fails
+	s.unblock() // batch 2 completes; batch 3 holds both retries, and fails
 
 	if err := <-held; err != nil {
 		t.Fatalf("the held Append: %v", err)
@@ -211,6 +231,7 @@ func TestAStoreErrorPoisonsEveryWaiterAndEverythingAfter(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = l.Close() })
+	t.Cleanup(s.unblock) // runs first: a test failing while the store is held must not hang Close
 	ev := func(id string) Event {
 		return Event{ID: EventID(id), OccurredAt: time.Unix(1, 0), Actor: System(),
 			Action: "user.login", Outcome: OutcomeSuccess}
@@ -233,7 +254,7 @@ func TestAStoreErrorPoisonsEveryWaiterAndEverythingAfter(t *testing.T) {
 	for len(l.reqs) < waiters {
 		runtime.Gosched()
 	}
-	close(s.release) // batch 2 succeeds; batch 3 holds every waiter, and fails
+	s.unblock() // batch 2 succeeds; batch 3 holds every waiter, and fails
 
 	if err := <-held; err != nil {
 		t.Fatalf("the held Append: %v", err)

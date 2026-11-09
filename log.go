@@ -241,6 +241,13 @@ func (l *Log) Append(ctx context.Context, ev Event) (Receipt, error) {
 	}
 	req := &request{entry: eventEntry(ev), reply: make(chan reply, 1)}
 
+	// A context already done never enqueues. Without this, the select below
+	// would choose at random between enqueueing and ctx.Done when the queue
+	// has room, and a cancelled Append could be recorded.
+	if err := ctx.Err(); err != nil {
+		return Receipt{}, err
+	}
+
 	l.mu.RLock()
 	if l.closed {
 		l.mu.RUnlock()
@@ -261,7 +268,14 @@ func (l *Log) Append(ctx context.Context, ev Event) (Receipt, error) {
 	case rep := <-req.reply:
 		return rep.receipt, rep.err
 	case <-ctx.Done():
-		return Receipt{}, ErrOutcomeUnknown
+		// If the reply arrived as well, it is the known outcome: report it
+		// rather than "unknown".
+		select {
+		case rep := <-req.reply:
+			return rep.receipt, rep.err
+		default:
+			return Receipt{}, ErrOutcomeUnknown
+		}
 	}
 }
 
