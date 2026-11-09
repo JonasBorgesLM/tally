@@ -7,9 +7,24 @@ version: 2
 
 updates:
   # tally is stdlib only (RNF-01), so this should stay quiet. A pull request here
-  # is a dependency that should not be there. /interop joins this list with #30.
+  # is a dependency that should not be there.
   - package-ecosystem: gomod
     directory: /
+    target-branch: develop
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels: [dependencies]
+    commit-message:
+      prefix: build
+      include: scope
+
+  # interop is its own module, tests only, and depends on golang.org/x/mod, the
+  # reference the differential tests run against (RNF-02, #30). Keeping it
+  # current keeps the comparison against the reference as it is.
+  - package-ecosystem: gomod
+    directory: /interop
     target-branch: develop
     schedule:
       interval: weekly
