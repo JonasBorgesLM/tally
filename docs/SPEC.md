@@ -448,8 +448,10 @@ REQUIREMENTS is the one corrected. Every check in this document reports exactly 
 [`records.json`](../testdata/vectors/records.json) is a genesis and four entries forming one chain,
 covering every `actor_kind`, `payload_kind` and `outcome`, each given as fields, stored bytes and leaf
 hash. [`keys.json`](../testdata/vectors/keys.json) is a public test key in both §5.3 encodings, with
-its seed and key id, and a note it signed (§5.1). Checkpoints are added with #26, and segment files
-with the file store (#33). Sealing vectors need a fixed DEK and nonce as
+its seed and key id, and a note it signed (§5.1).
+[`checkpoints.json`](../testdata/vectors/checkpoints.json) is a §5.2 checkpoint over the head of
+`records.json`, signed with that key; the records and it verify (§7) with the whole log attested.
+Segment files are added with the file store (#33). Sealing vectors need a fixed DEK and nonce as
 inputs, and are added with #44. Conformance to §5 is tested
 against `golang.org/x/mod/sumdb/note` (#30). That package accepts up to 100 signatures and no size limit,
 so the differential test expects tally to reject notes it accepts above §6's limits, and never the

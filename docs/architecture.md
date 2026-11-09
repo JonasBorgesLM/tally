@@ -170,7 +170,7 @@ func Verify(ctx context.Context, src Source, keys Verifiers, opts ...VerifyOptio
 
 func NewVerifiers(keys ...string) (Verifiers, error) // signed-note verifier keys
 
-func FromCheckpoint(cp SignedCheckpoint) VerifyOption
+func FromCheckpoint(cp SignedCheckpoint) VerifyOption // an untrusted start is ErrUntrustedStart, an error
 func WithAnchor(a AnchorReader) VerifyOption
 func WithHeartbeat(interval, tolerance time.Duration, now time.Time) VerifyOption
 func WithRequireFullyAttested() VerifyOption // RF-18

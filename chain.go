@@ -9,42 +9,60 @@ import (
 // over one framed log that starts at leaf 0. Verify (#27) adds segments, the
 // incremental and pruned starts, signed checkpoints and the Report around it.
 
-// failureKind is a violation kind of SPEC §7.2. It becomes the public
-// FailureKind when Report does (#28); until then only the kinds this file
-// reports exist.
-type failureKind uint8
+// FailureKind is a violation kind of SPEC §7.2 and REQUIREMENTS §5.1. Each
+// check of the verification algorithm reports exactly one.
+type FailureKind uint8
 
+// The violation kinds. SPEC §7.2 says, for each, the check that reports it.
 const (
-	kindMalformedRecord failureKind = iota + 1
-	kindNonCanonicalEncoding
-	kindPrevHashMismatch
-	kindSeqGap
-	kindSeqRegression
-	kindTimeRegression
-	kindCheckpointMismatch
-	kindTruncatedBelowCheckpoint
+	MalformedRecord FailureKind = iota + 1
+	NonCanonicalEncoding
+	PrevHashMismatch
+	SeqGap
+	SeqRegression
+	TimeRegression
+	CheckpointMismatch
+	TruncatedBelowCheckpoint
+	BadSignature
+	UnknownKey
+	ForkDetected
+	HeartbeatGap
+	PrunedWithoutTrustedCheckpoint
+	UnattestedTail
 )
 
-func (k failureKind) String() string {
+func (k FailureKind) String() string {
 	switch k {
-	case kindMalformedRecord:
+	case MalformedRecord:
 		return "MalformedRecord"
-	case kindNonCanonicalEncoding:
+	case NonCanonicalEncoding:
 		return "NonCanonicalEncoding"
-	case kindPrevHashMismatch:
+	case PrevHashMismatch:
 		return "PrevHashMismatch"
-	case kindSeqGap:
+	case SeqGap:
 		return "SeqGap"
-	case kindSeqRegression:
+	case SeqRegression:
 		return "SeqRegression"
-	case kindTimeRegression:
+	case TimeRegression:
 		return "TimeRegression"
-	case kindCheckpointMismatch:
+	case CheckpointMismatch:
 		return "CheckpointMismatch"
-	case kindTruncatedBelowCheckpoint:
+	case TruncatedBelowCheckpoint:
 		return "TruncatedBelowCheckpoint"
+	case BadSignature:
+		return "BadSignature"
+	case UnknownKey:
+		return "UnknownKey"
+	case ForkDetected:
+		return "ForkDetected"
+	case HeartbeatGap:
+		return "HeartbeatGap"
+	case PrunedWithoutTrustedCheckpoint:
+		return "PrunedWithoutTrustedCheckpoint"
+	case UnattestedTail:
+		return "UnattestedTail"
 	default:
-		return fmt.Sprintf("failureKind(%d)", uint8(k))
+		return fmt.Sprintf("FailureKind(%d)", uint8(k))
 	}
 }
 
@@ -52,7 +70,7 @@ func (k failureKind) String() string {
 // the record that broke a rule, the leaf a head disagrees with, or the first
 // leaf missing below a head.
 type violation struct {
-	kind failureKind
+	kind FailureKind
 	seq  uint64
 	err  error
 }
@@ -90,7 +108,7 @@ func (c *chainState) add(body []byte) (record, *violation) {
 		return nil, &violation{kind: kind, seq: c.size, err: err}
 	}
 	if err := validate(r); err != nil {
-		return nil, &violation{kind: kindMalformedRecord, seq: c.size, err: err}
+		return nil, &violation{kind: MalformedRecord, seq: c.size, err: err}
 	}
 	switch r := r.(type) {
 	case *genesis:
@@ -115,7 +133,7 @@ func verifyFrames(log []byte, head *trustedHead) (uint64, *violation) {
 	for rest := log; len(rest) > 0 || c.size == 0; {
 		body, next, err := readFrame(rest)
 		if err != nil {
-			return c.size, &violation{kind: kindMalformedRecord, seq: c.size, err: err}
+			return c.size, &violation{kind: MalformedRecord, seq: c.size, err: err}
 		}
 		rest = next
 		if _, v := c.add(body); v != nil {
@@ -123,50 +141,50 @@ func verifyFrames(log []byte, head *trustedHead) (uint64, *violation) {
 		}
 		if head != nil && head.size == c.size {
 			if c.prevLeaf != head.hash {
-				return c.size, &violation{kind: kindCheckpointMismatch, seq: c.size - 1,
+				return c.size, &violation{kind: CheckpointMismatch, seq: c.size - 1,
 					err: errors.New("the trusted head differs from the stored leaf")}
 			}
 			headSeen = true
 		}
 	}
 	if head != nil && !headSeen && head.size > c.size {
-		return c.size, &violation{kind: kindTruncatedBelowCheckpoint, seq: c.size,
+		return c.size, &violation{kind: TruncatedBelowCheckpoint, seq: c.size,
 			err: fmt.Errorf("the trusted head covers %d leaves, the log holds %d", head.size, c.size)}
 	}
 	return c.size, nil
 }
 
 // decodeKind maps a strict-decoding failure to its §7.2 kind.
-func decodeKind(err error) failureKind {
+func decodeKind(err error) FailureKind {
 	if errors.Is(err, errNonCanonical) {
-		return kindNonCanonicalEncoding
+		return NonCanonicalEncoding
 	}
-	return kindMalformedRecord
+	return MalformedRecord
 }
 
 // checkChain applies the rules of SPEC §2 that relate r to the record before
 // it, in the order §2.2 lists them: log_id, seq, recorded_at, prev_hash. The
 // record-local rules run after it (§7 step 4).
-func checkChain(r record, index uint64, logID [16]byte, prevLeaf [32]byte, prevTime int64) (failureKind, error) {
+func checkChain(r record, index uint64, logID [16]byte, prevLeaf [32]byte, prevTime int64) (FailureKind, error) {
 	switch r := r.(type) {
 	case *genesis:
 		if index != 0 {
-			return kindMalformedRecord, fmt.Errorf("%w: a genesis at leaf %d", errMalformed, index)
+			return MalformedRecord, fmt.Errorf("%w: a genesis at leaf %d", errMalformed, index)
 		}
 	case *entry:
 		switch {
 		case index == 0:
-			return kindMalformedRecord, fmt.Errorf("%w: the log does not start with a genesis", errMalformed)
+			return MalformedRecord, fmt.Errorf("%w: the log does not start with a genesis", errMalformed)
 		case r.logID != logID:
-			return kindMalformedRecord, fmt.Errorf("%w: log_id differs from the log's", errMalformed)
+			return MalformedRecord, fmt.Errorf("%w: log_id differs from the log's", errMalformed)
 		case r.seq > index:
-			return kindSeqGap, fmt.Errorf("seq %d, want %d", r.seq, index)
+			return SeqGap, fmt.Errorf("seq %d, want %d", r.seq, index)
 		case r.seq < index:
-			return kindSeqRegression, fmt.Errorf("seq %d, want %d", r.seq, index)
+			return SeqRegression, fmt.Errorf("seq %d, want %d", r.seq, index)
 		case r.recordedAt < prevTime:
-			return kindTimeRegression, errors.New("recorded_at is before the previous record's")
+			return TimeRegression, errors.New("recorded_at is before the previous record's")
 		case r.prevHash != prevLeaf:
-			return kindPrevHashMismatch, errors.New("prev_hash differs from the previous leaf hash")
+			return PrevHashMismatch, errors.New("prev_hash differs from the previous leaf hash")
 		}
 	}
 	return 0, nil
