@@ -61,6 +61,14 @@ type Store interface {
 	Close() error
 }
 
+// AnchorReader reads checkpoints back from an anchor, off the host (RF-09).
+// It is deliberately separate from the writing side (#38): the writer on the
+// host only publishes, and the auditor off the host only reads, so neither
+// interface suggests that the host reads back from what it must not control.
+type AnchorReader interface {
+	Checkpoints(ctx context.Context) iter.Seq2[SignedCheckpoint, error]
+}
+
 // Clock is the log's source of time: recorded_at (RF-03) and the heartbeat
 // timer (RF-06). It is injectable so that tests control time without sleeping
 // (RNF-11). The log keeps recorded_at monotonic itself, so a Clock may step
