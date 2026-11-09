@@ -301,8 +301,9 @@ func TestReopenRefusesABrokenChain(t *testing.T) {
 }
 
 // Any store error poisons the log: the waiters fail, later Appends return
-// ErrPoisoned, and the store is never called again (ADR-0009). The full suite
-// and the Observer event are #20.
+// ErrPoisoned, and the store is never called again (ADR-0009), through the
+// public API and tallytest. TestAStoreErrorPoisonsEveryWaiterAndEverythingAfter
+// covers a batch of several waiters and the Observer event.
 //
 // Negative control: letting the writer call AppendBatch while poisoned made
 // this fail (AppendCalls went to 3).

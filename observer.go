@@ -33,7 +33,9 @@ type Observer interface {
 	// instead (RF-03, ADR-0007). It repeats for every entry until the clock
 	// catches up.
 	ClockRegression(by time.Duration)
-	// Poisoned reports the store error that poisoned the log (ADR-0009; #20).
+	// Poisoned reports, once, the store error that poisoned the log. Every
+	// later Append fails with ErrPoisoned; close the Log, and reopen it after a
+	// restart (ADR-0009).
 	Poisoned(err error)
 	// Recovered reports bytes quarantined while opening (RF-20; #34).
 	Recovered(quarantinedBytes int64)
