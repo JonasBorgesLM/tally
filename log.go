@@ -422,6 +422,8 @@ func (l *Log) commit(batch []*request) {
 		for _, rt := range retries {
 			rt.r.reply <- reply{err: l.err}
 		}
+		// Once: from here on commit answers ErrPoisoned before reaching this.
+		l.observe(func(o Observer) { o.Poisoned(err) })
 		return
 	}
 	latency := time.Since(start)

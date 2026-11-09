@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -171,5 +172,96 @@ func TestAnInBatchRetryIsAnsweredOnlyOnceDurable(t *testing.T) {
 		if res.err == nil || res.r != (Receipt{}) {
 			t.Fatalf("an Append of a failed batch returned %+v, %v; want an error and no Receipt", res.r, res.err)
 		}
+	}
+}
+
+// poisonWatch is an Observer that keeps Poisoned events.
+type poisonWatch struct {
+	mu   sync.Mutex
+	errs []error
+}
+
+func (*poisonWatch) Batch(int, time.Duration)      {}
+func (*poisonWatch) AnchorPublish(error, uint64)   {}
+func (*poisonWatch) DiskSpace(uint64)              {}
+func (*poisonWatch) ClockRegression(time.Duration) {}
+func (*poisonWatch) Recovered(int64)               {}
+func (p *poisonWatch) Poisoned(err error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.errs = append(p.errs, err)
+}
+
+// ADR-0009, R-04: a failing AppendBatch fails every waiter in its batch with
+// ErrPoisoned wrapping the store's error, every later Append returns
+// ErrPoisoned without reaching the store, and the Observer is told once.
+// Several distinct entries are certainly in the failing batch: they wait in
+// the queue while the writer is held in the store.
+//
+// Negative controls: replying success to the batch's waiters on a store error
+// made the waiter check fail; letting the writer call AppendBatch while
+// poisoned made the call count fail; removing the Poisoned event made the
+// Observer check fail.
+func TestAStoreErrorPoisonsEveryWaiterAndEverythingAfter(t *testing.T) {
+	const waiters = 5
+	s := &batchStore{block: 2, fail: 3, entered: make(chan struct{}), release: make(chan struct{})}
+	watch := &poisonWatch{}
+	l, err := Open(context.Background(), s, testSigner("example.com/log"), WithObserver(watch))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = l.Close() })
+	ev := func(id string) Event {
+		return Event{ID: EventID(id), OccurredAt: time.Unix(1, 0), Actor: System(),
+			Action: "user.login", Outcome: OutcomeSuccess}
+	}
+
+	held := make(chan error, 1)
+	go func() { _, err := l.Append(context.Background(), ev("held")); held <- err }()
+	<-s.entered
+
+	errs := make(chan error, waiters)
+	for i := range waiters {
+		go func() {
+			r, err := l.Append(context.Background(), ev("w"+strconv.Itoa(i)))
+			if r != (Receipt{}) {
+				err = errors.New("a Receipt came with the failure")
+			}
+			errs <- err
+		}()
+	}
+	for len(l.reqs) < waiters {
+		runtime.Gosched()
+	}
+	close(s.release) // batch 2 succeeds; batch 3 holds every waiter, and fails
+
+	if err := <-held; err != nil {
+		t.Fatalf("the held Append: %v", err)
+	}
+	for range waiters {
+		if err := <-errs; !errors.Is(err, ErrPoisoned) || !strings.Contains(err.Error(), "disk on fire") {
+			t.Fatalf("a waiter of the failing batch got %v, want ErrPoisoned wrapping the store error", err)
+		}
+	}
+
+	for i := range 3 {
+		if _, err := l.Append(context.Background(), ev("later"+strconv.Itoa(i))); !errors.Is(err, ErrPoisoned) {
+			t.Fatalf("Append after poisoning = %v, want ErrPoisoned", err)
+		}
+	}
+	s.mu.Lock()
+	calls := s.calls
+	s.mu.Unlock()
+	if calls != 3 { // the genesis, the held batch, the failing batch
+		t.Fatalf("the store was called %d times, want 3: never again after poisoning", calls)
+	}
+
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	watch.mu.Lock()
+	defer watch.mu.Unlock()
+	if len(watch.errs) != 1 || !strings.Contains(watch.errs[0].Error(), "disk on fire") {
+		t.Fatalf("Poisoned events %v, want exactly one with the store error", watch.errs)
 	}
 }
