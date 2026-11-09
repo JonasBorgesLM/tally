@@ -64,7 +64,7 @@ func (e *Encoder) Uint64(v uint64) {
 
 // Int64 appends v as its two's complement, big-endian.
 func (e *Encoder) Int64(v int64) {
-	e.Uint64(uint64(v)) //nolint:gosec // G115: the bit pattern is the encoding; no value is lost.
+	e.Uint64(uint64(v)) // #nosec G115 -- the bit pattern is the encoding; no value is lost.
 }
 
 // Fixed appends b with no length prefix, for a [n]byte field. The record layout
@@ -85,7 +85,7 @@ func (e *Encoder) Bytes(b []byte, limit uint32) {
 		e.err = ErrTooLong
 		return
 	}
-	e.buf = binary.BigEndian.AppendUint32(e.buf, uint32(len(b))) //nolint:gosec // G115: bounded by limit, a uint32, just above.
+	e.buf = binary.BigEndian.AppendUint32(e.buf, uint32(len(b))) // #nosec G115 -- bounded by limit, a uint32, just above.
 	e.buf = append(e.buf, b...)
 }
 
@@ -103,7 +103,7 @@ func (e *Encoder) String(s string, limit uint32) {
 		e.err = ErrTooLong
 		return
 	}
-	e.buf = binary.BigEndian.AppendUint32(e.buf, uint32(len(s))) //nolint:gosec // G115: bounded by limit, a uint32, just above.
+	e.buf = binary.BigEndian.AppendUint32(e.buf, uint32(len(s))) // #nosec G115 -- bounded by limit, a uint32, just above.
 	e.buf = append(e.buf, s...)
 }
 
@@ -138,11 +138,11 @@ func (d *Decoder) next(n uint64) []byte {
 	if d.err != nil {
 		return nil
 	}
-	if n > uint64(len(d.b)-d.off) { //nolint:gosec // G115: off never exceeds len(d.b), so the difference is not negative.
+	if n > uint64(len(d.b)-d.off) { // #nosec G115 -- off never exceeds len(d.b), so the difference is not negative.
 		d.err = ErrTruncated
 		return nil
 	}
-	end := d.off + int(n) //nolint:gosec // G115: n is at most len(d.b)-d.off, an int, checked just above.
+	end := d.off + int(n) // #nosec G115 -- n is at most len(d.b)-d.off, an int, checked just above.
 	s := d.b[d.off:end]
 	d.off = end
 	return s
@@ -177,7 +177,7 @@ func (d *Decoder) Uint64() uint64 {
 
 // Int64 reads a big-endian two's complement int64.
 func (d *Decoder) Int64() int64 {
-	return int64(d.Uint64()) //nolint:gosec // G115: the bit pattern is the encoding; no value is lost.
+	return int64(d.Uint64()) // #nosec G115 -- the bit pattern is the encoding; no value is lost.
 }
 
 // Fixed fills dst from the next len(dst) bytes, for a [n]byte field. On an
