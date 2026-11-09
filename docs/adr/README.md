@@ -31,6 +31,7 @@ when M1 to M6 implement it gets an amendment.
 | [`0013`](0013-ecosystem-dependency-rules.md) | Core libraries do not depend on each other, and consumers host the adapters | Accepted | — |
 | [`0014`](0014-verifier-supply-chain.md) | The verifier's release is reproducible, signed and attested | Accepted | — |
 | [`0015`](0015-signer-in-process-behind-an-interface.md) | The signer runs in process in the MVP, behind an interface | Accepted | — |
+| [`0016`](0016-verifier-stops-at-first-broken-record.md) | The verifier stops at the first broken record, and judges checkpoints only against the prefix it verified | Accepted | — |
 
 ## Reopening criteria on the record
 
@@ -52,4 +53,4 @@ Deferred deliberately, listed rather than left implicit.
 | The vault's on-disk format and KEK rotation | #43 (M6), then `docs/SPEC.md` |
 | Whether usher's new port replaces or sits beside `audit.Emitter`; a process death before a retry on a reducing event | #51: usher's own ADR, superseding `usher/ADR-0017` |
 | How heartbeats keep a time source under tlog-checkpoint | #60 (M11) |
-| Whether SPEC v1 is sufficient for an independent verifier | #10 (before M1) |
+| Whether SPEC v1 is sufficient for an independent verifier | #10: a clean-session review found 27 gaps over three rounds, closed in `docs/SPEC.md` and [`0016`](0016-verifier-stops-at-first-broken-record.md) |
