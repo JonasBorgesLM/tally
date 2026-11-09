@@ -26,6 +26,7 @@ func (testSigner) Sign([]byte) ([]byte, error) { return nil, errors.New("not a r
 // until release is closed, after sending on entered.
 type batchStore struct {
 	block            int
+	fail             int // the call that fails, writing nothing
 	entered, release chan struct{}
 
 	mu    sync.Mutex
@@ -42,6 +43,9 @@ func (s *batchStore) AppendBatch(_ context.Context, recs []Record) error {
 	if n == s.block {
 		s.entered <- struct{}{}
 		<-s.release
+	}
+	if n == s.fail {
+		return errors.New("disk on fire")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -116,5 +120,56 @@ func TestGroupCommitCoalescesUpToMaxBatch(t *testing.T) {
 	}
 	if total != queued+1 || largest != maxBatch {
 		t.Fatalf("batches %v: want %d entries in total and a full batch of %d", s.sizes[1:], queued+1, maxBatch)
+	}
+}
+
+// RF-01 for retries inside one batch: a second Append of an EventID already in
+// the batch is answered with the first one's receipt only once the batch is
+// durable. If the batch then fails, neither may hold a Receipt. Both requests
+// are certainly in one batch: they wait in the queue while the writer is held
+// in the store, and the batch they form is the one that fails.
+//
+// Negative control: answering the in-batch retry when it is found, before
+// AppendBatch, made this fail.
+func TestAnInBatchRetryIsAnsweredOnlyOnceDurable(t *testing.T) {
+	s := &batchStore{block: 2, fail: 3, entered: make(chan struct{}), release: make(chan struct{})}
+	l, err := Open(context.Background(), s, testSigner("example.com/log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = l.Close() })
+	ev := func(id string) Event {
+		return Event{ID: EventID(id), OccurredAt: time.Unix(1, 0), Actor: System(),
+			Action: "user.login", Outcome: OutcomeSuccess}
+	}
+
+	held := make(chan error, 1)
+	go func() { _, err := l.Append(context.Background(), ev("held")); held <- err }()
+	<-s.entered // batch 2 is in the store
+
+	type result struct {
+		r   Receipt
+		err error
+	}
+	results := make(chan result, 2)
+	for range 2 {
+		go func() {
+			r, err := l.Append(context.Background(), ev("same"))
+			results <- result{r, err}
+		}()
+	}
+	for len(l.reqs) < 2 {
+		runtime.Gosched()
+	}
+	close(s.release) // batch 2 completes; batch 3 holds both retries, and fails
+
+	if err := <-held; err != nil {
+		t.Fatalf("the held Append: %v", err)
+	}
+	for range 2 {
+		res := <-results
+		if res.err == nil || res.r != (Receipt{}) {
+			t.Fatalf("an Append of a failed batch returned %+v, %v; want an error and no Receipt", res.r, res.err)
+		}
 	}
 }

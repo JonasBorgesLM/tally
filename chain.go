@@ -79,18 +79,18 @@ type chainState struct {
 	prevTime int64
 }
 
-// add checks body as the next leaf and, if it is valid, advances the state.
-// On a violation the state is unchanged.
-func (c *chainState) add(body []byte) *violation {
+// add checks body as the next leaf and, if it is valid, advances the state and
+// returns the decoded record. On a violation the state is unchanged.
+func (c *chainState) add(body []byte) (record, *violation) {
 	r, err := decodeStrict(body)
 	if err != nil {
-		return &violation{kind: decodeKind(err), seq: c.size, err: err}
+		return nil, &violation{kind: decodeKind(err), seq: c.size, err: err}
 	}
 	if kind, err := checkChain(r, c.size, c.logID, c.prevLeaf, c.prevTime); err != nil {
-		return &violation{kind: kind, seq: c.size, err: err}
+		return nil, &violation{kind: kind, seq: c.size, err: err}
 	}
 	if err := validate(r); err != nil {
-		return &violation{kind: kindMalformedRecord, seq: c.size, err: err}
+		return nil, &violation{kind: kindMalformedRecord, seq: c.size, err: err}
 	}
 	switch r := r.(type) {
 	case *genesis:
@@ -100,7 +100,7 @@ func (c *chainState) add(body []byte) *violation {
 	}
 	c.prevLeaf = leafHash(body)
 	c.size++
-	return nil
+	return r, nil
 }
 
 // verifyFrames verifies a log held as concatenated frames from leaf 0. It
@@ -118,7 +118,7 @@ func verifyFrames(log []byte, head *trustedHead) (uint64, *violation) {
 			return c.size, &violation{kind: kindMalformedRecord, seq: c.size, err: err}
 		}
 		rest = next
-		if v := c.add(body); v != nil {
+		if _, v := c.add(body); v != nil {
 			return c.size, v
 		}
 		if head != nil && head.size == c.size {
