@@ -32,10 +32,12 @@ when M1 to M6 implement it gets an amendment.
 | [`0014`](0014-verifier-supply-chain.md) | The verifier's release is reproducible, signed and attested | Accepted | — |
 | [`0015`](0015-signer-in-process-behind-an-interface.md) | The signer runs in process in the MVP, behind an interface | Accepted | — |
 | [`0019`](0019-segments-rotate-only-at-a-stored-checkpoint.md) | When a deployment needs a hard bound on segment size, or the `Log` gains a channel through which a store can request a checkpoint before it rotates. |
+| [`0020`](0020-vault-file-per-subject-and-kek-rewrap.md) | When a deployment needs a vault backed by a database or a KMS's own key store, or a measured subject count makes per-file storage too slow to back up. |
 | [`0016`](0016-verifier-stops-at-first-broken-record.md) | The verifier stops at the first broken record, and judges checkpoints only against the prefix it verified | Accepted | — |
 | [`0017`](0017-observer-panics-are-recovered.md) | A panicking Observer is recovered, its event dropped, and the panic counted | Accepted | — |
 | [`0018`](0018-unattested-tail-is-a-violation-kind.md) | Requiring full attestation reports UnattestedTail, a violation kind of its own | Accepted | — |
 | [`0019`](0019-segments-rotate-only-at-a-stored-checkpoint.md) | A file store rotates segments only after storing a checkpoint that covers every record | Accepted | — |
+| [`0020`](0020-vault-file-per-subject-and-kek-rewrap.md) | The file vault keeps one file per subject, behind a KEK interface, and rotates by rewrapping each file | Accepted | — |
 
 ## Reopening criteria on the record
 
@@ -54,7 +56,7 @@ Deferred deliberately, listed rather than left implicit.
 
 | Question | Where it gets answered |
 | --- | --- |
-| The vault's on-disk format and KEK rotation | #43 (M6), then `docs/SPEC.md` |
+| The vault's on-disk format and KEK rotation | Decided in [`0020`](0020-vault-file-per-subject-and-kek-rewrap.md); the encoding goes in `docs/SPEC.md` §4.1 with #43 |
 | Whether usher's new port replaces or sits beside `audit.Emitter`; a process death before a retry on a reducing event | #51: usher's own ADR, superseding `usher/ADR-0017` |
 | How heartbeats keep a time source under tlog-checkpoint | #60 (M11) |
 | Whether SPEC v1 is sufficient for an independent verifier | #10: a clean-session review found 27 gaps over three rounds, closed in `docs/SPEC.md` and [`0016`](0016-verifier-stops-at-first-broken-record.md) |
