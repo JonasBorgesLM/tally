@@ -14,7 +14,7 @@ import (
 )
 
 // Vault maps identifiers to refs and seals payloads under each ref's DEK
-// (RF-11). FileVault is one. Shred joins it with #45.
+// (RF-11). FileVault is one.
 type Vault interface {
 	// Resolve returns the identifier's ref, creating it on first use.
 	Resolve(ctx context.Context, identifier []byte) (tally.SubjectRef, error)
@@ -24,6 +24,10 @@ type Vault interface {
 	// Open decrypts a payload Seal produced with the same ref and aad. A
 	// shredded ref is tally.ErrShredded; any other mismatch is ErrOpen.
 	Open(ctx context.Context, ref tally.SubjectRef, sealed, aad []byte) ([]byte, error)
+	// Shred destroys ref's DEK, so nothing sealed under it opens again, and
+	// a later Resolve of the same identifier makes a new ref. It is
+	// idempotent.
+	Shred(ctx context.Context, ref tally.SubjectRef) error
 }
 
 var _ Vault = (*FileVault)(nil)
