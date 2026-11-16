@@ -173,6 +173,7 @@ type Observer interface {
 func Verify(ctx context.Context, src Source, keys Verifiers, opts ...VerifyOption) (*Report, error)
 
 func NewVerifiers(keys ...string) (Verifiers, error) // signed-note verifier keys
+func VerifyCheckpoint(cp SignedCheckpoint, keys Verifiers) error // SPEC §5.4 on one checkpoint, no log
 
 func FromCheckpoint(cp SignedCheckpoint) VerifyOption // an untrusted start is ErrUntrustedStart, an error
 func WithAnchor(a AnchorReader) VerifyOption
@@ -212,6 +213,12 @@ package filestore
 func Open(ctx context.Context, dir string, opts ...Option) (*Store, error) // lock, recovery
 func (s *Store) Prune(ctx context.Context, cp tally.SignedCheckpoint, keys tally.Verifiers) (removed int, err error)
 func OpenReader(dir string) (*Reader, error) // read-only Source: no lock, no recovery, never writes (#93)
+
+// cmd/tally: read-only commands, exit 0 intact, 1 violation, 2 usage or IO error (RF-13).
+// Every log-derived value printed is escaped first (RS-13).
+//   tally verify     --dir DIR --key VKEY [--anchor DIR] [--require-fully-attested] [--from FILE] [--heartbeat D --tolerance D]
+//   tally head       --dir DIR             // size and last leaf hash, unverified
+//   tally checkpoint --dir DIR --key VKEY  // the newest stored checkpoint that verifies
 
 package anchor
 

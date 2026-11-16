@@ -161,3 +161,40 @@ func TestCheckpointSize(t *testing.T) {
 		}
 	}
 }
+
+// VerifyCheckpoint accepts the published checkpoint under its key, and refuses
+// it under another key or with a byte changed (SPEC §5.4).
+func TestVerifyCheckpoint(t *testing.T) {
+	raw, err := os.ReadFile(checkpointVectorsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var f checkpointVectorFile
+	if err = json.Unmarshal(raw, &f); err != nil {
+		t.Fatal(err)
+	}
+	cp := SignedCheckpoint(f.Checkpoints[0].Note)
+	keys, err := NewVerifiers("example.com/log+d455c521+AQOhB7/zzhC+HXDdGOdLwJln5NYwm6UNXx3chmQSVTG4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = VerifyCheckpoint(cp, keys); err != nil {
+		t.Fatalf("VerifyCheckpoint(vector) = %v", err)
+	}
+	tampered := bytes.Clone(cp)
+	tampered[len("example.com/log\ntally-chain/v1\n")] = '6' // the size line
+	if err = VerifyCheckpoint(tampered, keys); err == nil {
+		t.Error("a tampered checkpoint was accepted")
+	}
+	_, other, err := note.GenerateKey(bytes.NewReader(bytes.Repeat([]byte{3}, 32)), "example.com/log")
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherKeys, err := NewVerifiers(other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyCheckpoint(cp, otherKeys); err == nil {
+		t.Error("a checkpoint was accepted under a key that did not sign it")
+	}
+}
