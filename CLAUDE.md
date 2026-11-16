@@ -3,8 +3,9 @@
 Guidance for Claude Code in this repository. The general engineering rules are in
 `~/.claude/CLAUDE.md`; this file carries only what is true of tally.
 
-**Status: design stage.** No library code exists. `REQUIREMENTS.md`, `docs/SPEC.md`,
-`docs/THREAT-MODEL.md` and `docs/architecture.md` are the plan the code is checked against.
+**Status: pre-release.** The library, `filestore`, `anchor`, `seal` and the CLI are implemented; no
+version is tagged. `REQUIREMENTS.md`, `docs/SPEC.md`, `docs/THREAT-MODEL.md` and `docs/architecture.md`
+are what the code is checked against.
 Work is tracked on the [project board](https://github.com/users/JonasBorgesLM/projects/9).
 
 ## Project Overview
