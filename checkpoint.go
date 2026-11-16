@@ -126,6 +126,9 @@ func (l *Log) checkpoint(state string) (SignedCheckpoint, error) {
 		return nil, l.err
 	}
 	l.lastCP = lastCheckpoint{size: l.head.size, at: at}
+	// Stored first, published after: an anchored checkpoint is always one
+	// the host has (architecture.md, "Checkpoint").
+	l.enqueue(cp)
 	l.checkSpace()
 	return cp, nil
 }

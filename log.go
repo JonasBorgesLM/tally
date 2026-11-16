@@ -59,6 +59,10 @@ type config struct {
 
 	checkpointEntries uint64
 	checkpointPeriod  time.Duration
+
+	anchors     []Anchor
+	anchorQueue int
+	anchorFlush time.Duration
 }
 
 // Defaults. MaxDelay is RNF-03's provisional 2 ms; MaxBatch bounds the work
@@ -154,6 +158,13 @@ type Log struct {
 	finalErr  error // the closed checkpoint's, set by the writer before done closes
 
 	observerPanics atomic.Uint64
+	observerMu     sync.Mutex // the Observer is never called concurrently
+
+	// One bounded queue and goroutine per anchor (RF-07, RF-19).
+	anchors      []*anchorQueue
+	anchorCtx    context.Context // the publishers' lifetime, cancelled at Close's deadline
+	anchorCancel context.CancelFunc
+	anchorFlush  chan struct{} // closed by Close: publish what is queued, then stop
 
 	// Owned by the writer goroutine once Open returns.
 	head   chainState
@@ -192,6 +203,9 @@ func Open(ctx context.Context, s Store, signer Signer, opts ...Option) (*Log, er
 		idempotencyWindow: defaultIdempotencyWindow,
 		checkpointEntries: defaultCheckpointEntries,
 		checkpointPeriod:  defaultCheckpointPeriod,
+
+		anchorQueue: defaultAnchorQueue,
+		anchorFlush: defaultAnchorFlushTimeout,
 	}
 	for _, o := range opts {
 		o(&cfg)
@@ -215,6 +229,7 @@ func Open(ctx context.Context, s Store, signer Signer, opts ...Option) (*Log, er
 		}
 	}
 	l.id = l.head.logID
+	l.startAnchors()
 	// The writer outlives every caller: Append's context governs only the wait
 	// for a reply, and a caller giving up must not interrupt a write in progress.
 	go l.writer() //nolint:contextcheck // deliberate, see above.
@@ -354,7 +369,9 @@ func (l *Log) Close() error {
 		l.senders.Wait()
 		close(l.quit)
 		<-l.done
-		l.closeErr = errors.Join(l.finalErr, l.store.Close())
+		// The closing checkpoint is queued by now; publish it, bounded.
+		anchorErr := l.flushAnchors()
+		l.closeErr = errors.Join(l.finalErr, anchorErr, l.store.Close())
 	})
 	return l.closeErr
 }
