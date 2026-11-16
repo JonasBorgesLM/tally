@@ -31,9 +31,11 @@ when M1 to M6 implement it gets an amendment.
 | [`0013`](0013-ecosystem-dependency-rules.md) | Core libraries do not depend on each other, and consumers host the adapters | Accepted | — |
 | [`0014`](0014-verifier-supply-chain.md) | The verifier's release is reproducible, signed and attested | Accepted | — |
 | [`0015`](0015-signer-in-process-behind-an-interface.md) | The signer runs in process in the MVP, behind an interface | Accepted | — |
+| [`0019`](0019-segments-rotate-only-at-a-stored-checkpoint.md) | When a deployment needs a hard bound on segment size, or the `Log` gains a channel through which a store can request a checkpoint before it rotates. |
 | [`0016`](0016-verifier-stops-at-first-broken-record.md) | The verifier stops at the first broken record, and judges checkpoints only against the prefix it verified | Accepted | — |
 | [`0017`](0017-observer-panics-are-recovered.md) | A panicking Observer is recovered, its event dropped, and the panic counted | Accepted | — |
 | [`0018`](0018-unattested-tail-is-a-violation-kind.md) | Requiring full attestation reports UnattestedTail, a violation kind of its own | Accepted | — |
+| [`0019`](0019-segments-rotate-only-at-a-stored-checkpoint.md) | A file store rotates segments only after storing a checkpoint that covers every record | Accepted | — |
 
 ## Reopening criteria on the record
 
