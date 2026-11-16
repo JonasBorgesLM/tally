@@ -10,6 +10,13 @@ The release workflow will refuse to publish a tag with no section here.
 
 ### Added
 
+- The RUNBOOK, complete: monitoring off the host, host compromise, a poisoned log, disk full, prune, shredding a
+  subject and vault backups, beside key rotation. Each procedure was executed by a drill in
+  `cmd/tally/runbook_test.go`, through the CLI where it has a command, and says what it was executed against;
+  the disk-full drill runs on a real 2 MB tmpfs in CI. A shred is now recorded by ref, so a restored vault
+  backup can have every recorded shred applied again.
+- README: usage, and the status of a pre-release instead of a design.
+
 - Benchmarks for RNF-03 (`filestore/bench_test.go`): durable append by number of callers, reopening after a crash, and
   verifying a stored log, with the results recorded in `docs/BENCHMARKS.md` beside the hardware and Go version. CI
   compares base and head on every pull request in the job summary, without gating on the numbers. RNF-03 is amended:

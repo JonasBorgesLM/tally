@@ -3,18 +3,51 @@
 **A tamper-evident audit log library for Go:** a hash chain, signed checkpoints anchored off the
 host, offline verification, and crypto-shredding for LGPD.
 
-> **Status: design stage. There is no library code yet, and nothing here can be installed.**
-> The requirements, threat model, format specification and decisions are written and enforced by
-> CI, and they are what the implementation is checked against. Progress is on the
-> [project board](https://github.com/users/JonasBorgesLM/projects/9).
+> **Status: pre-release.** The library, the file store, the anchor spool, the vault and the CLI are
+> implemented and verified in CI, with the attack suite below. There is no tagged version yet, and the API
+> may change until v0.1.0. Progress is on the [project board](https://github.com/users/JonasBorgesLM/projects/9).
 
-## What it will do
+## What it does
 
 Someone who compromises a host, or an insider with privileged access, tries to erase the trace of what
 they did. An ordinary log cannot prove its history is intact. tally records events in an append-only
 chain, signs checkpoints, publishes them where the host cannot change them, and verifies offline,
 pointing at exactly where and how the chain was violated. Personal data is sealed so it can be erased
 without breaking the chain.
+
+## Using it
+
+```bash
+go get github.com/JonasBorgesLM/tally@develop
+go install github.com/JonasBorgesLM/tally/cmd/tally@develop
+tally keygen --name example.com/audit --out audit   # audit.key (0600) and audit.pub
+```
+
+```go
+// The signing key from tally keygen. golang.org/x/mod/sumdb/note's signer satisfies tally.Signer, and
+// the key's name is the log's origin for its whole life.
+signer, err := note.NewSigner(privateKey)
+store, err := filestore.Open(ctx, "/var/lib/app/audit", filestore.WithFreeSpaceThreshold(256<<20))
+spool, err := anchor.NewDir("/var/spool/app-anchor") // the host's half of an anchor: see below
+log, err := tally.Open(ctx, store, signer, tally.WithAnchors(spool))
+defer log.Close()
+
+actor, err := tally.Service("billing")
+receipt, err := log.Append(ctx, tally.Event{
+	ID: tally.EventID(requestID), OccurredAt: time.Now(), Actor: actor,
+	Action: "invoice.read", Resource: "invoice/8812", Outcome: tally.OutcomeSuccess,
+})
+// receipt is returned only once the entry is durable. An error is the real one: whether the action
+// proceeds without a record is the application's decision (ADR-0010).
+```
+
+An auditor, off the host, with a copy of the log and of the anchor:
+
+```bash
+tally verify --dir audit-copy --key "$(cat audit.pub)" --anchor anchor-copy   # 0 intact, 1 violated, 2 could not verify
+```
+
+Running it, including what to monitor from off the host, is in the [RUNBOOK](docs/RUNBOOK.md).
 
 ## The guarantee, stated honestly
 
@@ -87,7 +120,8 @@ that can change what it already published.
 
 In each recipe, the auditor verifies against the copy off the host, with `tally.WithAnchor` over a `Dir`
 opened on it. Read on the host, a spool says only what the host chose to leave there. The pull or upload
-interval adds to the window in which the newest entries are unprotected.
+interval adds to the window in which the newest entries are unprotected. Watching for a host that went
+silent also happens there, never on the host: [RUNBOOK, "Monitoring off the host"](docs/RUNBOOK.md#monitoring-off-the-host).
 
 ## Personal data and crypto-shredding
 
@@ -129,7 +163,7 @@ or any other law: that depends on the operator's process and must be validated w
 - **Whatever the application put in clear stays.** A `resource` or `event_id` that carries personal data,
   through a mistake RS-18 cannot catch, is in the log for good.
 
-The procedure, and how to handle vault backups, is in the [RUNBOOK](docs/RUNBOOK.md#shredding-a-subject-draft-46).
+The procedure, and how to handle vault backups, is in the [RUNBOOK](docs/RUNBOOK.md#shredding-a-subject).
 
 ## Documents
 
@@ -139,6 +173,8 @@ The procedure, and how to handle vault backups, is in the [RUNBOOK](docs/RUNBOOK
 | [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md) | Threats, mitigations and residuals |
 | [`docs/SPEC.md`](docs/SPEC.md) | The format, enough to write an independent verifier |
 | [`docs/architecture.md`](docs/architecture.md) | Packages, real signatures, flows |
+| [`docs/RUNBOOK.md`](docs/RUNBOOK.md) | Operating procedures, each executed, and monitoring off the host |
+| [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) | RNF-03's measurements, with hardware and Go version |
 | [`docs/adr/`](docs/adr/README.md) | Decisions, with the alternatives they rejected |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Git flow and commit format, checked by CI |
 | [`SECURITY.md`](SECURITY.md) | Private vulnerability reporting |

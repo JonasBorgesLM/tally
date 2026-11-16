@@ -38,7 +38,7 @@ func cli(t *testing.T, args ...string) (stdout, stderr string, code int) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.CommandContext(t.Context(), exe, args...) // #nosec G204 -- the test binary itself
+	cmd := exec.CommandContext(t.Context(), exe, args...) // #nosec G204 G702 -- the test binary itself, with a test's own arguments
 	cmd.Env = append(os.Environ(), "TALLY_RUN_CLI=1")
 	var out, errOut bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errOut

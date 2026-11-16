@@ -258,6 +258,34 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+  # ------------------------------------------------------ runbook drill ----
+  #
+  # docs/RUNBOOK.md's disk-full procedure on a real volume rather than an
+  # injected filesystem (#50): a 2 MB tmpfs fills, and ENOSPC comes from the
+  # kernel. The test skips without the volume, so the step asserts that it
+  # passed: a skip would otherwise read as green.
+  runbook-drill:
+    name: runbook drill on a small volume
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: go.mod
+      - name: mount a 2 MB tmpfs
+        run: |
+          sudo mkdir -p /mnt/tally-small
+          sudo mount -t tmpfs -o "size=2m,mode=0700,uid=$(id -u),gid=$(id -g)" tmpfs /mnt/tally-small
+          df -h /mnt/tally-small
+      - name: disk-full drill
+        env:
+          TALLY_SMALL_VOLUME: /mnt/tally-small
+        run: |
+          set -o pipefail
+          go test ./cmd/tally -run '^TestDrillDiskFull$' -v -count 1 | tee "$RUNNER_TEMP/drill.log"
+          grep -q -- '--- PASS: TestDrillDiskFull' "$RUNNER_TEMP/drill.log"
+
   # --------------------------------------------------------------- lint ----
   lint:
     name: lint
@@ -554,6 +582,7 @@ jobs:
       - boundaries
       - fuzz
       - bench
+      - runbook-drill
       - lint
       - govulncheck
       - docs
