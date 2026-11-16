@@ -486,10 +486,13 @@ accepted checkpoints naming more than one `origin` (step 3).
 
    A `head` that differs is `ForkDetected` for an anchor checkpoint and `CheckpointMismatch` otherwise. A
    checkpoint whose comparison succeeds is **matched**.
-6. **Checkpoint order.** Sort accepted checkpoints by `size`, then by `recorded_at`, the start checkpoint
-   included. `recorded_at` MUST NOT decrease along that order, else `TimeRegression`: equivalently, no
-   checkpoint has a later `recorded_at` than one of larger `size`. Heartbeats produce many checkpoints of
-   one `size`, so the secondary key is what makes the order unique. Two with the same `size` and different heads
+6. **Checkpoint order.** Sort accepted checkpoints by `size`, then by `recorded_at`, then by `state`, `open`
+   before `closed`, the start checkpoint included. `recorded_at` MUST NOT decrease along that order, else
+   `TimeRegression`: equivalently, no checkpoint has a later `recorded_at` than one of larger `size`.
+   Heartbeats produce many checkpoints of one `size`, which the secondary key orders. Two can also share a
+   `recorded_at`, since a clock regression repeats the last one (RF-03), and a log closed then signs its
+   `closed` checkpoint at the instant of its last `open` one; `Close` signs after the last batch, so the
+   `closed` one is the later. Two with the same `size` and different heads
    are `ForkDetected`, whether or not either was compared with the log.
 7. **A start above leaf 0.** If `f > 0`, some accepted checkpoint with `size ≥ f` MUST be matched, else
    `PrunedWithoutTrustedCheckpoint`. This holds for a pruned log and for an incremental start alike. A

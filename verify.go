@@ -322,7 +322,14 @@ func Verify(ctx context.Context, src Source, keys Verifiers, opts ...VerifyOptio
 		if a.size != b.size {
 			return cmpU64(a.size, b.size)
 		}
-		return cmpI64(a.at, b.at)
+		if a.at != b.at {
+			return cmpI64(a.at, b.at)
+		}
+		// Open before closed: Close signs after the last batch, so of two
+		// checkpoints sharing a size and an instant, which a clock regression
+		// produces (RF-03), the closed one is the later. Left to the anchor's
+		// order, a clean close could read as a crash (SPEC §7 step 6).
+		return cmpBool(a.closed, b.closed)
 	})
 	matched := make([]bool, len(cps))
 	var (
@@ -493,6 +500,16 @@ func startEntry(body []byte) (*entry, bool) {
 	return e, ok
 }
 
+func cmpBool(a, b bool) int {
+	switch {
+	case a == b:
+		return 0
+	case b:
+		return -1
+	}
+	return 1
+}
+
 func cmpU64(a, b uint64) int {
 	switch {
 	case a < b:
@@ -513,7 +530,7 @@ func cmpI64(a, b int64) int {
 	return 0
 }
 
-// heartbeatGaps is SPEC §7 step 8. cps is sorted by size, then time.
+// heartbeatGaps is SPEC §7 step 8. cps is in step 6's order: size, time, state.
 func heartbeatGaps(cps []checkpoint, origin string, hb *heartbeat) []Failure {
 	limit := hb.interval + hb.tolerance
 	var (

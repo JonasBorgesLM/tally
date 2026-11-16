@@ -94,3 +94,10 @@ The release workflow will refuse to publish a tag with no section here.
 - `tally.LeafHash`, `tally.RecordLogID`, `tally.MaxRecordLen`, `tally.MaxCheckpointLen` and `tally.ErrLocked`,
   for a `Store` writing segment headers and checking lengths before allocating.
 - SPEC §3.4, the checkpoints file, and the segment vector `testdata/vectors/segments.json`.
+
+### Fixed
+
+- `Verify` with a heartbeat could report a clean close as a crash, `HeartbeatGap`, when the closing checkpoint
+  shared its size and its `recorded_at` with the last open one, as a clock regression makes it: the two were left
+  in the anchor's order. They are now ordered open before closed (SPEC §7 step 6). Found by the RUNBOOK's
+  monitoring drill, which failed 87 times in 200.
