@@ -237,3 +237,33 @@ func TestASignedControlCharacterIsRejectedByBoth(t *testing.T) {
 		t.Fatal("tally accepted a signed note holding a control character, which x/mod rejects")
 	}
 }
+
+// tally.NewSigner reads a key x/mod generated, under the same name and key id,
+// and what it signs verifies under x/mod's verifier for that key (#120).
+//
+// Seen failing with the signature's first byte flipped before x/mod checks it.
+func TestNewSignerAgainstXMod(t *testing.T) {
+	xs, xv, err := xnote.GenerateKey(bytes.NewReader(bytes.Repeat([]byte{3}, 64)), "example.com/audit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := tally.NewSigner(xs)
+	if err != nil {
+		t.Fatalf("tally.NewSigner reads x/mod's signer key: %v", err)
+	}
+	v, err := xnote.NewVerifier(xv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Name() != v.Name() || s.KeyHash() != v.KeyHash() {
+		t.Fatalf("tally names the key %s+%08x, x/mod %s+%08x", s.Name(), s.KeyHash(), v.Name(), v.KeyHash())
+	}
+	msg := []byte("example.com/audit\ntally-chain/v1\n1\n")
+	sig, err := s.Sign(msg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !v.Verify(msg, sig) {
+		t.Fatal("x/mod does not verify what tally.NewSigner's signer signed")
+	}
+}

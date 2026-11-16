@@ -174,6 +174,7 @@ type Observer interface {
 func Verify(ctx context.Context, src Source, keys Verifiers, opts ...VerifyOption) (*Report, error)
 
 func NewVerifiers(keys ...string) (Verifiers, error) // signed-note verifier keys
+func NewSigner(skey string) (Signer, error)          // the signer key tally keygen writes; never printed (RS-07)
 func VerifyCheckpoint(cp SignedCheckpoint, keys Verifiers) error // SPEC §5.4 on one checkpoint, no log
 func DecodeRecord(body []byte) (RecordView, error)                // SPEC §2 fields, decoded strictly, no chain check
 

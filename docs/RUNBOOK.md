@@ -23,8 +23,9 @@ routine change or after a compromise. Two facts constrain every rotation:
 
 Keys are generated with `tally keygen --name ORIGIN --out PREFIX`, which writes `PREFIX.key` at mode
 0600 and `PREFIX.pub`, refuses to overwrite either, and prints only the verifier key. For a rotation,
-`ORIGIN` is the log's existing origin. `golang.org/x/mod/sumdb/note`'s `GenerateKey` produces the same
-encodings (SPEC §5.3), and its `NewSigner` also satisfies `tally.Signer`.
+`ORIGIN` is the log's existing origin. `tally.NewSigner` loads the `.key` file's contents.
+`golang.org/x/mod/sumdb/note`'s `GenerateKey` produces the same encodings (SPEC §5.3), and its `NewSigner`
+also satisfies `tally.Signer`.
 
 ### Planned rotation
 
