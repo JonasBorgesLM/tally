@@ -3,6 +3,7 @@ package tally
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -182,6 +183,18 @@ func (l *Log) loadLastCheckpoint(ctx context.Context) error {
 	}
 	l.lastCP = lastCheckpoint{size: min(size, l.head.size), at: at}
 	return nil
+}
+
+// CheckpointSize returns the size line of a checkpoint (SPEC §5.2) **without
+// verifying its signature**. It is for a Store reading back the checkpoints it
+// stored itself, such as recovery refusing to truncate below the last one
+// (RF-20); a verifier reads checkpoints with Verify (SPEC §5.4).
+func CheckpointSize(cp SignedCheckpoint) (uint64, error) {
+	size, _, ok := parseCheckpointHead(cp)
+	if !ok {
+		return 0, errors.New("tally: a stored checkpoint does not parse")
+	}
+	return size, nil
 }
 
 // parseCheckpointHead reads the size and recorded_at lines of a checkpoint the

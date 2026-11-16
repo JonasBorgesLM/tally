@@ -135,3 +135,29 @@ func TestCheckpointVectors(t *testing.T) {
 		t.Fatalf("Verify over the vectors = %+v, %v; want OK with all 5 leaves attested", rep, err)
 	}
 }
+
+// CheckpointSize reads the size of the published checkpoint, and refuses
+// bytes that are not a checkpoint. It does not verify the signature: a Store
+// reads back only what it stored itself.
+func TestCheckpointSize(t *testing.T) {
+	raw, err := os.ReadFile(checkpointVectorsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var f checkpointVectorFile
+	if err = json.Unmarshal(raw, &f); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.Checkpoints) != 1 {
+		t.Fatalf("%d checkpoint vectors, want 1", len(f.Checkpoints))
+	}
+	got, err := CheckpointSize(SignedCheckpoint(f.Checkpoints[0].Note))
+	if err != nil || got != f.Checkpoints[0].Size {
+		t.Fatalf("CheckpointSize = %d, %v; want %d", got, err, f.Checkpoints[0].Size)
+	}
+	for _, bad := range []string{"", "not a note", "a\nb\n\n— sig\n"} {
+		if _, err := CheckpointSize(SignedCheckpoint(bad)); err == nil {
+			t.Errorf("CheckpointSize(%q) succeeded", bad)
+		}
+	}
+}

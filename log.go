@@ -208,6 +208,11 @@ func Open(ctx context.Context, s Store, signer Signer, opts ...Option) (*Log, er
 	if err := l.load(ctx, signer.Name()); err != nil {
 		return nil, err
 	}
+	if r, ok := s.(RecoveryReporter); ok {
+		if n := r.Recovered(); n > 0 {
+			l.observe(func(o Observer) { o.Recovered(n) })
+		}
+	}
 	l.id = l.head.logID
 	// The writer outlives every caller: Append's context governs only the wait
 	// for a reply, and a caller giving up must not interrupt a write in progress.
