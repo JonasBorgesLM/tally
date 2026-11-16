@@ -20,6 +20,9 @@ The release workflow will refuse to publish a tag with no section here.
   anything is removed, and never below the last stored checkpoint (RF-20). `tally.Open` reports the count
   through `Observer.Recovered` for any `Store` implementing the new `tally.RecoveryReporter`.
 - `tally.CheckpointSize`, which reads a stored checkpoint's size without verifying it.
+- `filestore.Store.Prune` removes the segments wholly below a checkpoint that verifies and agrees with the
+  log, after writing it to the prune marker `pruned.tlc` (SPEC §3.5, ADR-0012). It cannot tell whether the
+  checkpoint was anchored (RS-20). `tally.Open` opens a pruned store, starting at its first record.
 - `tally.LeafHash`, `tally.RecordLogID`, `tally.MaxRecordLen`, `tally.MaxCheckpointLen` and `tally.ErrLocked`,
   for a `Store` writing segment headers and checking lengths before allocating.
 - SPEC §3.4, the checkpoints file, and the segment vector `testdata/vectors/segments.json`.
