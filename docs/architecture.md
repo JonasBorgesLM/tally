@@ -211,7 +211,7 @@ to test for them.
 package filestore
 
 func Open(ctx context.Context, dir string, opts ...Option) (*Store, error) // lock, recovery
-func (s *Store) Prune(ctx context.Context, cp tally.SignedCheckpoint, keys tally.Verifiers) (removed int, err error)
+func (s *Store) Prune(ctx context.Context, cp tally.SignedCheckpoint, keys tally.Verifiers) (removed int, err error) // ErrPruneRefused
 func OpenReader(dir string) (*Reader, error) // read-only Source: no lock, no recovery, never writes (#93)
 
 // cmd/tally: read-only commands, exit 0 intact, 1 violation, 2 usage or IO error (RF-13).
@@ -220,6 +220,7 @@ func OpenReader(dir string) (*Reader, error) // read-only Source: no lock, no re
 //   tally head       --dir DIR             // size and last leaf hash, unverified
 //   tally checkpoint --dir DIR --key VKEY  // the newest stored checkpoint that verifies
 //   tally keygen     --name ORIGIN --out PREFIX // PREFIX.key at 0600, PREFIX.pub; never overwrites
+//   tally prune      --dir DIR --key VKEY --anchor DIR --checkpoint FILE // only at a checkpoint the anchor holds (RS-20)
 
 package anchor
 

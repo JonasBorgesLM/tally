@@ -2,6 +2,7 @@ package filestore
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 
@@ -12,6 +13,11 @@ import (
 // pruneMarkerName holds the checkpoint the log was last pruned at (SPEC §3.5).
 const pruneMarkerName = "pruned.tlc"
 
+// ErrPruneRefused means Prune would not prune at cp: it does not verify under
+// the keys, or the log does not verify from it. Nothing was removed. Any
+// other error from Prune is an IO failure.
+var ErrPruneRefused = errors.New("filestore: prune refused")
+
 // Prune removes the leading segments whose every record is below cp's size,
 // and returns how many it removed (RF-14, ADR-0012). The segment holding
 // record size-1 is kept, so the log still starts at or below the checkpoint.
@@ -19,6 +25,7 @@ const pruneMarkerName = "pruned.tlc"
 // cp must verify under keys and agree with the stored log: Prune runs Verify
 // from cp (RF-08) and refuses unless the report is OK. A checkpoint whose
 // signature does not verify is refused with tally.ErrUntrustedStart (RS-20).
+// Every refusal also matches ErrPruneRefused.
 // Any other violation the report holds, such as a stored checkpoint under a
 // key missing from keys, refuses too: pruning destroys evidence, so it
 // proceeds only on a log that verifies.
@@ -39,12 +46,15 @@ const pruneMarkerName = "pruned.tlc"
 // reads is removed. An IO error is final for the Store, as a write's is.
 func (s *Store) Prune(ctx context.Context, cp tally.SignedCheckpoint, keys tally.Verifiers) (removed int, err error) {
 	rep, err := tally.Verify(ctx, s, keys, tally.FromCheckpoint(cp))
+	if errors.Is(err, tally.ErrUntrustedStart) {
+		return 0, fmt.Errorf("%w: %w", ErrPruneRefused, err)
+	}
 	if err != nil {
 		return 0, fmt.Errorf("filestore: prune: %w", err)
 	}
 	if !rep.OK() {
 		f := rep.Failures[0]
-		return 0, fmt.Errorf("filestore: prune: the log does not verify from the checkpoint: %v at %d", f.Kind, f.Seq)
+		return 0, fmt.Errorf("%w: the log does not verify from the checkpoint: %v at %d", ErrPruneRefused, f.Kind, f.Seq)
 	}
 	size, err := tally.CheckpointSize(cp)
 	if err != nil {

@@ -92,7 +92,8 @@ func TestPruneKeepsThePartialSegment(t *testing.T) {
 // A checkpoint whose signature does not verify, or which does not agree with
 // the stored log, prunes nothing (RS-20).
 //
-// Seen failing with the Verify call removed from Prune.
+// Seen failing with the Verify call removed from Prune, and with
+// ErrPruneRefused dropped from the refusal of a checkpoint of another log.
 func TestPruneRefusesAnUntrustedCheckpoint(t *testing.T) {
 	dir, cps := prunable(t)
 	cp, _ := midSegment(t, dir, cps)
@@ -133,8 +134,8 @@ func TestPruneRefusesAnUntrustedCheckpoint(t *testing.T) {
 			s := mustOpen(t, dir)
 			defer func() { _ = s.Close() }()
 			removed, err := s.Prune(t.Context(), c.cp, verifiers(t))
-			if err == nil || (c.want != nil && !errors.Is(err, c.want)) {
-				t.Fatalf("Prune = %d, %v; want a refusal (%v)", removed, err, c.want)
+			if !errors.Is(err, ErrPruneRefused) || (c.want != nil && !errors.Is(err, c.want)) {
+				t.Fatalf("Prune = %d, %v; want ErrPruneRefused (%v)", removed, err, c.want)
 			}
 			if removed != 0 || !maps(snap(t, dir), before) {
 				t.Error("a refused Prune changed the directory")

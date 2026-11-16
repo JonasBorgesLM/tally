@@ -78,7 +78,8 @@ func (dropCheckpoints) PutCheckpoint(context.Context, tally.SignedCheckpoint) er
 func writeLog(t *testing.T, dir, anchorDir, prefix string, n int, checkpoints bool) {
 	t.Helper()
 	ctx := context.Background()
-	s, err := filestore.Open(ctx, dir)
+	// Small segments, so that a log of a few entries has some to prune.
+	s, err := filestore.Open(ctx, dir, filestore.WithSegmentSize(400))
 	if err != nil {
 		t.Fatal(err)
 	}
