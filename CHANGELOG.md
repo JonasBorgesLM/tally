@@ -33,6 +33,10 @@ The release workflow will refuse to publish a tag with no section here.
   drops the oldest checkpoint but the newest, counts it, and reports `ErrAnchorQueueFull`; a failure is reported
   and retried with backoff; `Close` flushes up to a deadline and returns `ErrAnchorUnflushed` for what is left
   (RF-19). The `Observer` is never called concurrently, now that `AnchorPublish` can come from an anchor's goroutine.
+- `anchor.Dir`, a create-only spool of checkpoints: each one is written once under a name derived from its bytes,
+  linked into place so an existing file is never overwritten, and a republished identical checkpoint is success
+  (RS-10, RS-17). It is the host's half of an anchor; the README gives recipes for the other half, and says
+  what each one leaves the host unable to do.
 - `filestore.OpenReader`, a read-only `Source` that never takes the lock, recovers or writes, for verifying a
   directory as it is, damage included.
 - `filestore.Store.Prune` removes the segments wholly below a checkpoint that verifies and agrees with the

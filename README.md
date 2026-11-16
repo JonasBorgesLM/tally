@@ -33,6 +33,28 @@ What that does not cover, in the terms you would otherwise assume:
 
 The full list, with a residual for each threat, is in [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md).
 
+## Anchoring off the host
+
+**A directory the host can write to is not an anchor.** Whoever has root on the host rewrites or deletes
+it, and the protection against truncation, rollback, a rewrite with the key and a heartbeat gap goes
+with it (T-05, T-07, T-08, T-15, T-21). `anchor.Dir` runs, reports intact, and on its own protects
+nothing: it is a **create-only spool**, the host's half of an anchor. It never overwrites or deletes a
+checkpoint, so that something off the host can take each one, once, to a place the host cannot reach.
+The library cannot check that the other half exists (RS-17).
+
+Each recipe below completes it. What makes it an anchor is the last column: the host holds no credential
+that can change what it already published.
+
+| Recipe | The host holds | The host cannot |
+| --- | --- | --- |
+| **Pull over rsync from another machine.** The anchor machine runs `rsync --ignore-existing` from the spool on a schedule, over SSH, into storage only it can write. | Nothing on the anchor machine. The anchor side holds an SSH key to the host, restricted to reading the spool (for example `rrsync -ro`). | Reach the anchor machine at all. It cannot alter or delete a copy already pulled. Between publication and the next pull, the checkpoint is as safe as the host. |
+| **Push to a Git remote that refuses force pushes.** A job on the host commits new spool files and pushes. The server sets `receive.denyNonFastForwards` and `receive.denyDeletes`, or an equivalent branch protection. | A deploy key that can push. | Rewrite or delete history. It **can** push a commit that removes files from the tip, so the auditor reads every commit, never only the tip. |
+| **Upload to a bucket with object lock.** A job on the host uploads each new spool file. The bucket has versioning and object lock in *compliance* mode, with a retention longer than your audit horizon. | A credential with `PutObject` only, and no delete, retention or governance-bypass permission. | Overwrite a version or delete it before its retention ends, not even with the account's root, in compliance mode. *Governance* mode can be bypassed by a privileged principal, and does not qualify. |
+
+In each recipe, the auditor verifies against the copy off the host, with `tally.WithAnchor` over a `Dir`
+opened on it. Read on the host, a spool says only what the host chose to leave there. The pull or upload
+interval adds to the window in which the newest entries are unprotected.
+
 ## Documents
 
 | | |
