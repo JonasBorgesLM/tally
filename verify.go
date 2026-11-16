@@ -230,6 +230,12 @@ func parseCheckpointBody(text []byte) (checkpoint, *Failure) {
 	if err != nil || t.UTC().Format(checkpointTimeLayout) != lines[4] {
 		return bad("recorded_at is not in SPEC §5.2's layout")
 	}
+	// The layout admits years 0000 to 9999, and int64 nanoseconds only 1677
+	// to 2262: outside that, UnixNano wraps and the checkpoint would be judged
+	// at another time entirely (found by FuzzCheckpointBody).
+	if time.Unix(0, t.UnixNano()).UTC().Format(checkpointTimeLayout) != lines[4] {
+		return bad("recorded_at is outside the range of int64 nanoseconds")
+	}
 	var closed bool
 	switch lines[5] {
 	case stateOpen:
