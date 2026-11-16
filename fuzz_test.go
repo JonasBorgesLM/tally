@@ -2,7 +2,9 @@ package tally
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
+	"os"
 	"testing"
 )
 
@@ -48,6 +50,93 @@ func FuzzDecode(f *testing.F) {
 		}
 		if !bytes.Equal(again, in) {
 			t.Fatalf("an accepted record re-encodes differently\ninput     %x\nreencoded %x", in, again)
+		}
+	})
+}
+
+// vectorCheckpointNote is the signed note of testdata/vectors/checkpoints.json
+// and vectorVerifierKey its key, as seeds: the fuzzer starts from an accepted
+// checkpoint and mutates it.
+const vectorVerifierKey = "example.com/log+d455c521+AQOhB7/zzhC+HXDdGOdLwJln5NYwm6UNXx3chmQSVTG4"
+
+func vectorCheckpointNote(f *testing.F) []byte {
+	f.Helper()
+	raw, err := os.ReadFile(checkpointVectorsPath)
+	if err != nil {
+		f.Fatal(err)
+	}
+	var v checkpointVectorFile
+	if err := json.Unmarshal(raw, &v); err != nil {
+		f.Fatal(err)
+	}
+	return []byte(v.Checkpoints[0].Note)
+}
+
+// FuzzCheckpoint drives SPEC §5.4, a whole signed checkpoint, with arbitrary
+// bytes (RS-04, RS-05). Invariants: a rejection is a Failure of a kind §7.2
+// names for a checkpoint, never a panic or an error outside them; and an
+// accepted checkpoint's text is exactly what tally would write for its fields,
+// so no two texts are accepted as one checkpoint.
+//
+// Negative control: reporting the note layer's rejections as HeartbeatGap made
+// this fail on its first input.
+func FuzzCheckpoint(f *testing.F) {
+	keys, err := NewVerifiers(vectorVerifierKey)
+	if err != nil {
+		f.Fatal(err)
+	}
+	seed := vectorCheckpointNote(f)
+	f.Add(seed)
+	f.Add(seed[:len(seed)/2])
+	f.Add(bytes.Replace(seed, []byte("\n\n"), []byte("\n"), 1))
+	f.Fuzz(func(t *testing.T, in []byte) {
+		c, fail := readCheckpoint(bytes.Clone(in), keys)
+		if fail != nil {
+			switch fail.Kind {
+			case MalformedRecord, NonCanonicalEncoding, BadSignature, UnknownKey:
+			default:
+				t.Fatalf("a checkpoint rejected as %v, which §7.2 does not give a checkpoint", fail.Kind)
+			}
+			return
+		}
+		state := stateOpen
+		if c.closed {
+			state = stateClosed
+		}
+		text := checkpointText(c.origin, c.size, c.head, c.at, state)
+		if !bytes.HasPrefix(in, []byte(text+"\n")) {
+			t.Fatalf("an accepted checkpoint's text is not the canonical one\ninput %q\nwant  %q", in, text)
+		}
+	})
+}
+
+// FuzzCheckpointBody drives SPEC §5.2's body parser directly, which the
+// signature keeps FuzzCheckpoint from reaching (RS-04). Invariant: an
+// accepted body is exactly the canonical text of the fields it parsed to.
+//
+// Its first run found a recorded_at in the year 0000 accepted, which
+// UnixNano wrapped to 1753: testdata/fuzz/FuzzCheckpointBody keeps that input,
+// and removing the range check fails on it. Removing only the check against a
+// leading zero in the size is not caught, and need not be: the size's round
+// trip through FormatUint refuses it as well.
+func FuzzCheckpointBody(f *testing.F) {
+	seed := vectorCheckpointNote(f)
+	f.Add(seed[:bytes.Index(seed, []byte("\n\n"))+1])
+	f.Add([]byte("example.com/log\ntally-chain/v1\n1\nAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n2026-11-16T12:00:00.000000000Z\nopen\n"))
+	f.Fuzz(func(t *testing.T, in []byte) {
+		c, fail := parseCheckpointBody(bytes.Clone(in))
+		if fail != nil {
+			if fail.Kind != MalformedRecord && fail.Kind != NonCanonicalEncoding {
+				t.Fatalf("a body rejected as %v", fail.Kind)
+			}
+			return
+		}
+		state := stateOpen
+		if c.closed {
+			state = stateClosed
+		}
+		if text := checkpointText(c.origin, c.size, c.head, c.at, state); text != string(in) {
+			t.Fatalf("an accepted body is not canonical\ninput %q\nwant  %q", in, text)
 		}
 	})
 }

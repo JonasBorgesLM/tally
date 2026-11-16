@@ -367,7 +367,10 @@ tally-chain/v1
   fractional digits always, and the letter `Z`. In Go that is the layout
   `2006-01-02T15:04:05.000000000Z` on a UTC time; `time.RFC3339Nano` is **not** it, because it drops
   trailing zeros. The value is the head leaf's `recorded_at` (genesis's `created_at` at size 1) or a later
-  log clock reading. It is the signer's claim, not evidence of real time.
+  log clock reading. It is the signer's claim, not evidence of real time. It MUST be representable as
+  int64 nanoseconds since the Unix epoch, as a record's `recorded_at` is: from
+  `1677-09-21T00:12:43.145224192Z` to `2262-04-11T23:47:16.854775807Z`. A checkpoint whose time is outside
+  that range is malformed.
 - `state` is `open`, or `closed` on the checkpoint written by a clean `Close`. It is the signer's claim as
   well: it lets an honest restart produce no false alarm, and an attacker holding the key can write it too
   (T-15).

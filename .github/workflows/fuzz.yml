@@ -1,0 +1,138 @@
+# Long fuzz campaigns (#48).
+#
+# The pull-request fuzz job in ci.yml gives each target 20 seconds: a
+# regression gate that replays the committed corpus. Finding new inputs takes
+# hours, so this workflow runs every target on a schedule, each in its own job
+# with a bounded budget.
+#
+# Targets are discovered, as in ci.yml: a new Fuzz function anywhere in the
+# module is fuzzed here without editing this file.
+#
+# A finding fails its job. The failing input, which go test writes under the
+# target's testdata/fuzz directory, is uploaded as an artifact and printed in
+# the job summary with the command that reproduces it. Committing that file
+# turns it into a regression test that every go test runs.
+name: Fuzz
+
+on:
+  schedule:
+    # Nightly, at an hour no other workflow uses.
+    - cron: "41 3 * * *"
+  workflow_dispatch:
+    inputs:
+      fuzztime:
+        description: "Budget per target, as go test -fuzztime takes it"
+        required: false
+        default: "30m"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  GO_VERSION: "1.26"
+  FUZZTIME: ${{ inputs.fuzztime || '30m' }}
+
+jobs:
+  targets:
+    name: discover targets
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.list.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: go.mod
+      - name: list every Fuzz function
+        id: list
+        run: |
+          set -o pipefail
+          entries=()
+          for pkg in $(go list ./...); do
+            for target in $(go test -list '^Fuzz' "$pkg" | grep '^Fuzz' || true); do
+              entries+=("{\"pkg\":\"$pkg\",\"target\":\"$target\"}")
+            done
+          done
+          # An empty list would run nothing and report success: fail instead.
+          if [ "${#entries[@]}" -eq 0 ]; then
+            echo "::error::no fuzz targets found; the discovery is looking at the wrong thing"
+            exit 1
+          fi
+          matrix=$(IFS=,; echo "{\"include\":[${entries[*]}]}")
+          echo "found ${#entries[@]} targets: $matrix"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  fuzz:
+    name: fuzz ${{ matrix.target }}
+    needs: targets
+    runs-on: ubuntu-latest
+    # The budget plus setup, with room: a hung target must not hold a runner
+    # for six hours.
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.targets.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: go.mod
+      - name: go test -fuzz ${{ matrix.target }}, ${{ env.FUZZTIME }}
+        env:
+          PKG: ${{ matrix.pkg }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -o pipefail
+          # As in ci.yml: the coordinator has reported its own -fuzztime
+          # expiry as "context deadline exceeded" with no failing input. Only
+          # that is retried; a real finding writes its input and says so.
+          if ! go test -run '^$' -fuzz "^${TARGET}\$" -fuzztime "$FUZZTIME" "$PKG" 2>&1 | tee "$RUNNER_TEMP/fuzz.log"; then
+            if grep -q 'context deadline exceeded' "$RUNNER_TEMP/fuzz.log" && ! grep -q 'Failing input written to' "$RUNNER_TEMP/fuzz.log"; then
+              echo "::warning::$TARGET: fuzz budget expiry reported as a failure with no failing input; retrying once"
+              go test -run '^$' -fuzz "^${TARGET}\$" -fuzztime "$FUZZTIME" "$PKG"
+            else
+              exit 1
+            fi
+          fi
+
+      - name: preserve the failing input
+        if: failure()
+        env:
+          PKG: ${{ matrix.pkg }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          dir="$(go list -f '{{.Dir}}' "$PKG")/testdata/fuzz/$TARGET"
+          {
+            echo "## $TARGET found a failing input"
+            echo
+            echo "Reproduce, after downloading the artifact into \`$dir\`:"
+            echo
+            echo '```'
+            echo "go test -run '$TARGET/<file>' $PKG"
+            echo '```'
+            echo
+            for f in $(git -C "$dir" ls-files --others --exclude-standard . 2>/dev/null); do
+              echo "### $f"
+              echo '```'
+              head -c 4096 "$dir/$f"
+              echo
+              echo '```'
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+          mkdir -p "$RUNNER_TEMP/finding"
+          cp -r "$dir" "$RUNNER_TEMP/finding/" 2>/dev/null || true
+
+      - name: upload the failing input
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-finding-${{ matrix.target }}
+          path: ${{ runner.temp }}/finding
+          if-no-files-found: warn
+          retention-days: 90

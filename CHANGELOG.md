@@ -10,6 +10,11 @@ The release workflow will refuse to publish a tag with no section here.
 
 ### Added
 
+- Fuzz targets for the checkpoint parser (`FuzzCheckpoint`, `FuzzCheckpointBody`) and the segment frame (`FuzzFrame`),
+  beside the record decoder's, and a nightly workflow that fuzzes every target found, 30 minutes each, preserving
+  any failing input as an artifact. The first run found a checkpoint `recorded_at` outside the range of int64
+  nanoseconds accepted, and judged as another time; it is now malformed (SPEC §5.2).
+
 - The attack suite (`attack/`): one test per threat, T-01 to T-23, each asserting the detection it must meet or,
   for a partial threat, the limit it documents. CI fails when a threat of the threat model has no test or a named
   test is missing, and the README's attack table is generated from the suite and checked current.
