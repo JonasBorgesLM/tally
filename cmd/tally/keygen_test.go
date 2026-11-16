@@ -38,7 +38,9 @@ func TestKeygen(t *testing.T) {
 	}
 
 	// The private key, and its seed alone, appear in no output.
-	seed := skey[strings.LastIndexByte(skey, '+')+1:]
+	// PRIVATE+KEY+<name>+<id>+<base64>: the base64 may itself hold '+', so
+	// split at the four separators, never at the last '+'.
+	seed := strings.SplitN(skey, "+", 5)[4]
 	for _, s := range []string{stdout, stderr} {
 		if strings.Contains(s, skey) || strings.Contains(s, seed) {
 			t.Fatalf("the private key reached the output:\n%s", s)
