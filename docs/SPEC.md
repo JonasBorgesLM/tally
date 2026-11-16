@@ -277,7 +277,52 @@ payload is at least 29 bytes (1 + 12 + 16; the plaintext may be empty). Otherwis
 bytes, hashed as stored. After a shred the entry still verifies. The nonce's randomness and the AAD's
 correctness are writer requirements a verifier cannot check.
 
-The vault's on-disk format is specified with its implementation in M6 (#43), and will be added here.
+### 4.1 Vault
+
+A verifier never reads the vault; this section is for a writer, and for anyone restoring or auditing a
+vault (ADR-0020). **(writer)** throughout.
+
+A vault is a directory at mode 0700, holding files at mode 0600, each written atomically (temporary file,
+fsync, rename, directory fsync):
+
+| Path | Holds |
+| --- | --- |
+| `VAULT` | the vault key, wrapped by a KEK |
+| `idx/<64 hex digits>` | one subject's ref, under the name `HMAC-SHA256(vault key, identifier)` in lowercase hex |
+| `refs/<32 hex digits>` | one subject's DEK, wrapped by a KEK, under the name of its ref in lowercase hex |
+| `LOCK` | the lock one writer holds; no content |
+
+The identifier is stored nowhere. A ref is 128 random bits and the vault key and every DEK are 32 random
+bytes, none derived from anything. Every file is the §1 encoding of its fields:
+
+```
+VAULT          magic [8]byte = "TALLYVLT"   version uint8 = 1
+               kek_id string (1 to 64 bytes)   wrapped bytes (at most 1024)
+idx/<name>     magic [8]byte = "TALLYIDX"   version uint8 = 1
+               ref [16]byte
+refs/<name>    magic [8]byte = "TALLYREF"   version uint8 = 1
+               index [32]byte (the idx/ name, so a shred removes both)
+               kek_id string (1 to 64 bytes)   wrapped bytes (at most 1024)
+```
+
+`kek_id` names the KEK that produced `wrapped`. `wrapped` is that KEK's output for the key and an AAD that
+binds it to what it protects, each the §1 encoding of:
+
+```
+the vault key   tag string = "tally/v1/vault-key"
+a DEK           tag string = "tally/v1/dek"   ref [16]byte
+```
+
+so a wrapped DEK moved into another ref's file does not unwrap. With the local KEK, `wrapped` is
+`nonce (12 bytes) || AES-256-GCM(KEK key, nonce, key, aad)`. A KMS's format is its own.
+
+**Rotating the KEK** rewraps each `refs/` file not already under the new KEK, then `VAULT`, each in one
+atomic write, and changes no DEK. A rotation cut short leaves files under either KEK, each naming its
+own, and is finished by rotating again with both available.
+
+**Limits.** Deleting a file on an SSD or a journaling filesystem does not destroy it. A wrapped DEK
+recovered from the medium, together with a later compromise of the KEK that wrapped it, undoes a shred.
+Rotation narrows that window and does not close it. An old backup of the vault undoes a shred outright.
 
 ## 5. Checkpoints
 
