@@ -342,3 +342,52 @@ func TestRecordLogID(t *testing.T) {
 		t.Errorf("RecordLogID(garbage) = %v, want errMalformed", err)
 	}
 }
+
+// DecodeRecord returns every vector's fields as published, and refuses bytes
+// that are not a record.
+func TestDecodeRecord(t *testing.T) {
+	raw, err := os.ReadFile(recordVectorsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var f vectorFile
+	if err = json.Unmarshal(raw, &f); err != nil {
+		t.Fatal(err)
+	}
+	kinds := map[uint8]string{1: "subject", 2: "service", 3: "system"}
+	payloads := map[uint8]string{0: "none", 1: "plain", 2: "sealed"}
+	checked := 0
+	for _, v := range f.Records {
+		got, derr := DecodeRecord(unhex(t, v.BodyHex))
+		if derr != nil {
+			t.Fatalf("%s: %v", v.Name, derr)
+		}
+		checked++
+		if g := v.Genesis; g != nil {
+			if !got.Genesis || hex.EncodeToString(got.LogID[:]) != g.LogID || got.Origin != g.Origin ||
+				got.CreatedAt.UnixNano() != g.CreatedAt || got.Seq != 0 {
+				t.Errorf("%s: %+v", v.Name, got)
+			}
+			continue
+		}
+		e := v.Entry
+		if got.Genesis || got.Seq != e.Seq || hex.EncodeToString(got.LogID[:]) != e.LogID ||
+			got.RecordedAt.UnixNano() != e.RecordedAt || got.OccurredAt.UnixNano() != e.OccurredAt ||
+			hex.EncodeToString(got.EventID) != e.EventID || got.ActorKind != kinds[e.ActorKind] ||
+			hex.EncodeToString(got.ActorID) != e.ActorID || got.Action != e.Action || got.Resource != e.Resource ||
+			uint8(got.Outcome) != e.Outcome || got.PayloadKind != payloads[e.PayloadKind] ||
+			hex.EncodeToString(got.SubjectRef) != e.SubjectRef || hex.EncodeToString(got.Payload) != e.Payload ||
+			hex.EncodeToString(got.PrevHash[:]) != e.PrevHash {
+			t.Errorf("%s: decoded %+v, want %+v", v.Name, got, e)
+		}
+	}
+	if checked != 5 {
+		t.Fatalf("checked %d vectors, want 5", checked)
+	}
+	if _, err = DecodeRecord([]byte{1, 2, 3}); !errors.Is(err, errMalformed) {
+		t.Errorf("DecodeRecord(garbage) = %v", err)
+	}
+	if OutcomeDenied.String() != "denied" || Outcome(9).String() != "Outcome(9)" {
+		t.Error("Outcome.String")
+	}
+}

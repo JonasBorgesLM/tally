@@ -38,6 +38,11 @@ The release workflow will refuse to publish a tag with no section here.
   `--require-fully-attested`, `--from` and `--heartbeat`. Every log-derived value printed is escaped, so control
   characters, ANSI sequences and newlines cannot reach the terminal or forge a line (RS-13, T-17).
 - `tally.VerifyCheckpoint`, SPEC §5.4 applied to one checkpoint.
+- `tally export`: JSONL of the stored records, decoded, with every text field escaped and opaque bytes in base64
+  or hex (RS-13), or an audit bundle: a tar of the log directory, the anchor, the verifier keys and quarantine
+  files, with a MANIFEST of SHA-256 hashes that says `quarantine none` when there is none (RF-15). `tally
+  bundle-check` reports a bundle changed after export. The MANIFEST is not signed.
+- `tally.DecodeRecord` and `RecordView`, a stored record's fields; `Outcome.String`.
 - `tally prune`: prunes only at a checkpoint that verifies and that the anchor holds byte for byte (RS-20), and
   only with the log closed. `filestore.ErrPruneRefused` tells a refusal from an IO error.
 - `tally keygen`: a signing key in SPEC §5.3's encodings, the private key at 0600 and printed nowhere, never

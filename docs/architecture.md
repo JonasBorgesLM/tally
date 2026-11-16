@@ -174,6 +174,7 @@ func Verify(ctx context.Context, src Source, keys Verifiers, opts ...VerifyOptio
 
 func NewVerifiers(keys ...string) (Verifiers, error) // signed-note verifier keys
 func VerifyCheckpoint(cp SignedCheckpoint, keys Verifiers) error // SPEC §5.4 on one checkpoint, no log
+func DecodeRecord(body []byte) (RecordView, error)                // SPEC §2 fields, decoded strictly, no chain check
 
 func FromCheckpoint(cp SignedCheckpoint) VerifyOption // an untrusted start is ErrUntrustedStart, an error
 func WithAnchor(a AnchorReader) VerifyOption
@@ -221,6 +222,12 @@ func OpenReader(dir string) (*Reader, error) // read-only Source: no lock, no re
 //   tally checkpoint --dir DIR --key VKEY  // the newest stored checkpoint that verifies
 //   tally keygen     --name ORIGIN --out PREFIX // PREFIX.key at 0600, PREFIX.pub; never overwrites
 //   tally prune      --dir DIR --key VKEY --anchor DIR --checkpoint FILE // only at a checkpoint the anchor holds (RS-20)
+//   tally export     --dir DIR [--format jsonl] [--out FILE]  // decoded records, text escaped, bytes base64
+//   tally export     --dir DIR --format bundle --out F.tar --key VKEY [--anchor DIR]
+//                    // log/, anchor/, keys/verifiers.txt, MANIFEST (SHA-256 and size of each, quarantine count)
+//   tally bundle-check F.tar                                // 0 matches its MANIFEST, 1 altered
+// The MANIFEST is not signed: it shows a bundle changed after export, and says
+// nothing about the log, whose integrity is verify's against the anchor.
 
 package anchor
 
