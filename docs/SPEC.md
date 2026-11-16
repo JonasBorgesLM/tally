@@ -549,8 +549,9 @@ its seed and key id, and a note it signed (§5.1).
 `records.json`, signed with that key; the records and it verify (§7) with the whole log attested.
 [`segments.json`](../testdata/vectors/segments.json) is `records.json` and that checkpoint as a writer stores
 them (§3): segment 0 holding the five records, the checkpoints file, and the header-only segment 5 that
-the writer starts after the checkpoint (§3, ADR-0019), each file as hex. Sealing vectors need a fixed DEK and nonce as
-inputs, and are added with #44. Conformance to §5 is tested
+the writer starts after the checkpoint (§3, ADR-0019), each file as hex. [`seal.json`](../testdata/vectors/seal.json)
+is §4's sealing over a fixed DEK and nonce, for the `log_id`, `event_id` and `subject_ref` of `records.json`'s
+sealed entry: the AAD and the payload, each as hex. Conformance to §5 is tested
 against `golang.org/x/mod/sumdb/note` (#30). That package accepts up to 100 signatures and no size limit,
 so the differential test expects tally to reject notes it accepts above §6's limits, and never the
 reverse.

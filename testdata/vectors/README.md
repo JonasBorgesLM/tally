@@ -30,8 +30,7 @@ Points that are easy to get wrong, which these vectors exercise:
 - **`resource` is UTF-8 and is not normalised.** One vector holds multi-byte characters.
 - **`occurred_at` is untrusted.** Any `int64` is valid, including before the epoch; one vector holds `-1`.
 - **The sealed payload is opaque to a verifier.** Its bytes are the format byte `0x01`, a nonce and
-  bytes standing for ciphertext and tag. They are **not** real AES-GCM output. Sealing vectors with
-  a fixed DEK and nonce come with #44.
+  bytes standing for ciphertext and tag. They are **not** real AES-GCM output; `seal.json` is.
 
 ## `keys.json`
 
@@ -96,21 +95,37 @@ Points that are easy to get wrong:
 - **The header-only segment is valid only as the last one** (§3), and its `prev_hash` is what the
   checkpoint of size 5 is matched against (§7 step 5).
 
-## Not here yet
+## `seal.json`
 
-- **Sealing vectors** come with #44.
+SPEC §4's sealing with every random input fixed: a DEK of `0x42` repeated and a nonce of `00 01 … 0b`, over
+the `log_id`, `event_id` and `subject_ref` of `records.json`'s sealed entry. `aad_hex` is the §4 AAD and
+`payload_hex` the payload, format byte and nonce included. **A real DEK and nonce are random;** these are
+fixed only so that the output can be checked.
+
+To check an implementation: build the AAD from the three fields and compare with `aad_hex`, then seal
+`plaintext_hex` under `dek_hex` and `nonce_hex` and compare with `payload_hex`.
+
+Points that are easy to get wrong:
+
+- **The AAD is length-prefixed, field by field** (§1), not concatenated: `event_id` and `subject_ref`
+  each carry a 4-byte length, so no boundary between them can shift.
+- **The tag string comes first,** with its own length prefix, and `log_id` is fixed-width with none.
+
+The AAD and the payload were also recomputed outside Go, with Python's `cryptography` (OpenSSL's
+AES-GCM) and the AAD assembled by hand from §1.
 
 ## How they are made
 
-`TestRecordVectors`, `TestKeyVectors`, `TestCheckpointVectors` and `filestore`'s `TestSegmentVectors` (in the
-`*vectors_test.go` files) compare these
+`TestRecordVectors`, `TestKeyVectors`, `TestCheckpointVectors`, `filestore`'s `TestSegmentVectors` and
+`seal`'s `TestSealVector` compare these
 files with the implementation on every run, and never rewrite them. A suite that regenerated vectors
 would update them silently on a format break, which is the one change they exist to catch. To
 regenerate them after a deliberate format change:
 
 ```bash
 go test -run 'TestRecordVectors|TestKeyVectors|TestCheckpointVectors' -write-vectors .
-go test -run TestSegmentVectors -write-vectors ./filestore
+go test ./filestore -run TestSegmentVectors -write-vectors
+go test ./seal -run TestSealVector -write-vectors
 ```
 
 Then review the diff. A format change updates `docs/SPEC.md` and these vectors in the same pull request.
