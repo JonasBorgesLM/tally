@@ -197,13 +197,23 @@ In a segment that is not the last, every frame MUST be complete and good: any of
 Clean is `MalformedRecord`.
 
 **(writer)** A writer MUST NOT truncate below the last local checkpoint: if the tail states above would
-remove a record that checkpoint covers, opening fails.
+remove a record that checkpoint covers, opening fails. Opening also fails if the log already holds fewer leaves
+than that checkpoint's `size`, even with a clean tail: appending there would fork the log's own history.
+The last local checkpoint is the last good frame of the checkpoints file (§3.4) after its own recovery.
 
 **(writer)** Quarantine: the removed bytes are written durably to
 `quarantine-<segment>-<offset>.bin` before truncating, where `<segment>` is the segment's 16-digit name
 and `<offset>` is the byte offset of the first removed byte, as 16 lowercase hex digits. Quarantined
 bytes are part of an audit bundle. A short or bad tail and a flipped bit in the last acknowledged entry
 can be indistinguishable; quarantine preserves the evidence without settling it.
+
+If that name exists, from an earlier recovery at the same offset, the writer uses
+`quarantine-<segment>-<offset>-<k>.bin` with the smallest free decimal `k` from 1, and never overwrites a
+quarantine file. For the checkpoints file, `<segment>` is the word `checkpoints`.
+
+**(writer)** A last segment shorter than its header holds no record: a crash while the writer was
+creating it leaves one. The writer quarantines all of its bytes, at offset 0, and removes the file; the
+segment before it becomes the last, and MUST be Clean. Left in place, it is a violation (§3.1).
 
 ### 3.4 Checkpoints file
 
@@ -218,7 +228,12 @@ version    uint8    = 1
 The 9-byte header is followed by frames as in §3.2, each body a signed note (§5.1) whose `len` is
 checked against the checkpoint note ceiling (§6) before the body is read. A missing file means no
 local checkpoint. A file shorter than its header, or with the wrong `magic` or `version`, is a
-violation. Its tail is classified as the last segment's is (§3.3).
+violation. Its tail is classified as the last segment's is (§3.3). A checkpoints file shorter than its header is
+quarantined and removed, as a partial segment is.
+
+**(writer)** Recovering this file can drop its last checkpoint, which lowers the floor of §3.3 by one
+checkpoint. A checkpoint the writer published was durable here first, so an anchored copy (RF-09)
+still catches a record removed below it.
 
 These checkpoints come from the host being verified. They are worth what §7.1 says such checkpoints
 are worth; an anchor (§7 input) is what makes one trustworthy.

@@ -424,41 +424,6 @@ func TestFrameLengthIsCheckedBeforeAllocating(t *testing.T) {
 	})
 }
 
-// Until recovery exists (#34), Open refuses a log whose last segment does not
-// end on a complete, valid frame, rather than appending after bad bytes.
-func TestOpenRefusesABadTail(t *testing.T) {
-	cases := []struct {
-		name   string
-		mutate func(b []byte) []byte
-		want   error
-	}{
-		{"cut by one byte", func(b []byte) []byte { return b[:len(b)-1] }, errShortFrame},
-		{"a stray byte", func(b []byte) []byte { return append(b, 0) }, errShortFrame},
-		{"a flipped bit", func(b []byte) []byte { b[len(b)-5] ^= 1; return b }, errFrameCRC},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			dir := logDir(t)
-			s := mustOpen(t, dir)
-			if err := s.AppendBatch(context.Background(), records(vectorBodies(t), 0)); err != nil {
-				t.Fatal(err)
-			}
-			_ = s.Close()
-			seg0 := filepath.Join(dir, segmentName(0))
-			b, err := os.ReadFile(seg0) // #nosec G304 -- a test's own file
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(seg0, c.mutate(b), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := Open(context.Background(), dir); !errors.Is(err, c.want) {
-				t.Fatalf("Open = %v, want %v", err, c.want)
-			}
-		})
-	}
-}
-
 // A segment name with uppercase hex digits is an error, not a foreign file
 // to skip, so that renaming cannot hide a segment (SPEC §3).
 func TestUppercaseSegmentNameIsAnError(t *testing.T) {

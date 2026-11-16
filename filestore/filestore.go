@@ -7,6 +7,11 @@
 // is relied on (RF-01, ADR-0009). Any write or fsync error is final for the
 // Store, which refuses every later write.
 //
+// Opening recovers a torn tail by quarantining it, never by deleting it, and
+// never below the last stored checkpoint (RF-20). A torn write and a flipped
+// bit in the last acknowledged record can look the same (T-22): quarantine
+// keeps the evidence, and cannot tell which it was.
+//
 // A segment is rotated only inside PutCheckpoint, after the checkpoint is
 // durable, so every segment boundary carries a checkpoint of that size
 // (ADR-0019). The segment size is therefore a target, not a bound.
@@ -94,6 +99,8 @@ type Store struct {
 	closed bool
 	err    error // the first write or fsync error; final (ADR-0009)
 
+	recovered int64 // bytes quarantined by Open (RF-20)
+
 	logID   tally.LogID
 	segs    []uint64 // first_seq of each segment, ascending
 	seg     fsx.File // the last segment, open for appending; nil before genesis
@@ -104,16 +111,24 @@ type Store struct {
 	cpsSize int64    // durable length of the checkpoints file
 }
 
-var _ tally.Store = (*Store)(nil)
+var (
+	_ tally.Store            = (*Store)(nil)
+	_ tally.RecoveryReporter = (*Store)(nil)
+)
 
 // Open opens the log in dir, creating dir with mode 0700 if it does not exist.
 // It takes the directory's lock, fails with ErrLoosePermissions if dir is
 // accessible to group or others, and with tally.ErrLocked if another Store
 // holds it, in this process or another.
 //
-// Open reads every segment header and every frame of the last segment, and
-// refuses a log that does not end on a complete, valid frame. tally.Open then
-// reads the whole log through Records.
+// Open reads every segment header and every frame of the last segment and of
+// the checkpoints file, and recovers their tails (SPEC §3.3, RF-20): bytes
+// after the last complete, valid frame, or a last file shorter than its
+// header, are written durably to a quarantine file and only then removed.
+// Recovered reports how many. Open refuses, changing nothing, a bad frame
+// with bytes after it, and any recovery that would leave fewer records than
+// the last stored checkpoint covers. tally.Open then reads the whole log
+// through Records.
 func Open(ctx context.Context, dir string, opts ...Option) (*Store, error) {
 	cfg := config{segmentSize: DefaultSegmentSize, fsys: fsx.OS{}}
 	for _, o := range opts {

@@ -80,6 +80,16 @@ type Store interface {
 	Close() error
 }
 
+// RecoveryReporter is implemented by a Store that recovers a damaged tail
+// when it is opened, as filestore does (RF-20). Open checks for it, once, and
+// reports a non-zero count through Observer.Recovered, so a caller who passes
+// an Observer to the Log hears about a recovery without wiring the Store.
+type RecoveryReporter interface {
+	// Recovered returns how many bytes the Store moved to quarantine when
+	// it was opened.
+	Recovered() int64
+}
+
 // AnchorReader reads checkpoints back from an anchor, off the host (RF-09).
 // It is deliberately separate from the writing side (#38): the writer on the
 // host only publishes, and the auditor off the host only reads, so neither

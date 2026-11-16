@@ -120,6 +120,20 @@ func (f *recFile) Sync() error {
 	return f.File.Sync()
 }
 
+func (f *recFile) Truncate(size int64) error {
+	if err := f.fs.op("truncate " + f.base); err != nil {
+		return err
+	}
+	return f.File.Truncate(size)
+}
+
+func (r *recFS) Remove(name string) error {
+	if err := r.op("remove " + filepath.Base(name)); err != nil {
+		return err
+	}
+	return r.FS.Remove(name)
+}
+
 func (f *recFile) Close() error {
 	// The descriptor is closed even under an injected fault, so that it does
 	// not leak into the next case.
