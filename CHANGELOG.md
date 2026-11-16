@@ -10,6 +10,12 @@ The release workflow will refuse to publish a tag with no section here.
 
 ### Added
 
+- The attack suite (`attack/`): one test per threat, T-01 to T-23, each asserting the detection it must meet or,
+  for a partial threat, the limit it documents. CI fails when a threat of the threat model has no test or a named
+  test is missing, and the README's attack table is generated from the suite and checked current.
+- T-23 in the threat model: deleting leading segments down to a checkpointed boundary is indistinguishable from a
+  prune (ADR-0016); only the anchor and the operator's records tell them apart.
+
 - README, "Personal data and crypto-shredding": what every stored field may hold and which are in clear, and each
   limit of a shred, without a claim of LGPD compliance. RUNBOOK: a draft procedure for shredding a subject, vault
   backups, and narrowing what the medium keeps.
