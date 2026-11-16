@@ -554,6 +554,7 @@ func (l *Log) commit(batch []*request) {
 	}
 	// After the replies: the entries are durable whatever the Observer does.
 	l.observe(func(o Observer) { o.Batch(len(recs), latency) })
+	l.checkSpace()
 }
 
 // recordedAt reads the Clock for the next entry. recorded_at never goes back

@@ -126,6 +126,7 @@ func (l *Log) checkpoint(state string) (SignedCheckpoint, error) {
 		return nil, l.err
 	}
 	l.lastCP = lastCheckpoint{size: l.head.size, at: at}
+	l.checkSpace()
 	return cp, nil
 }
 

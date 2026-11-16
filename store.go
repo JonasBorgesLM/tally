@@ -90,6 +90,18 @@ type RecoveryReporter interface {
 	Recovered() int64
 }
 
+// SpaceReporter is implemented by a Store that watches the free space under
+// it, as filestore does with WithFreeSpaceThreshold (RNF-10). After every
+// batch and every checkpoint it stores, the Log asks, and reports low space
+// through Observer.DiskSpace, each time it is low: a full disk is a denial of
+// service against every action that fails closed (T-16), and the warning is
+// worth something only before writes start failing.
+type SpaceReporter interface {
+	// LowSpace returns the free bytes and whether they are below the Store's
+	// threshold. It is called on the writer goroutine and must not block.
+	LowSpace() (free uint64, low bool)
+}
+
 // AnchorReader reads checkpoints back from an anchor, off the host (RF-09).
 // It is deliberately separate from the writing side (#38): the writer on the
 // host only publishes, and the auditor off the host only reads, so neither
