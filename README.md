@@ -24,9 +24,8 @@ tally keygen --name example.com/audit --out audit   # audit.key (0600) and audit
 ```
 
 ```go
-// The signing key from tally keygen. golang.org/x/mod/sumdb/note's signer satisfies tally.Signer, and
-// the key's name is the log's origin for its whole life.
-signer, err := note.NewSigner(privateKey)
+// The signing key from tally keygen. Its name is the log's origin for the log's whole life.
+signer, err := tally.NewSigner(privateKey)
 store, err := filestore.Open(ctx, "/var/lib/app/audit", filestore.WithFreeSpaceThreshold(256<<20))
 spool, err := anchor.NewDir("/var/spool/app-anchor") // the host's half of an anchor: see below
 log, err := tally.Open(ctx, store, signer, tally.WithAnchors(spool))
