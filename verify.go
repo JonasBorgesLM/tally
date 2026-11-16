@@ -188,6 +188,17 @@ func readCheckpoint(cp SignedCheckpoint, keys Verifiers) (checkpoint, *Failure) 
 	return c, nil
 }
 
+// VerifyCheckpoint applies SPEC §5.4 to cp alone: it opens the signed note
+// under keys and parses its body strictly. A nil error means cp is accepted.
+// It says nothing about any log: whether cp agrees with one is Verify's
+// question (FromCheckpoint, WithAnchor).
+func VerifyCheckpoint(cp SignedCheckpoint, keys Verifiers) error {
+	if _, f := readCheckpoint(cp, keys); f != nil {
+		return fmt.Errorf("tally: checkpoint not accepted: %v: %s", f.Kind, f.Note)
+	}
+	return nil
+}
+
 // parseCheckpointBody is SPEC §5.2, strictly.
 func parseCheckpointBody(text []byte) (checkpoint, *Failure) {
 	bad := func(why string) (checkpoint, *Failure) {
