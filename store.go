@@ -3,6 +3,7 @@ package tally
 import (
 	"context"
 	"errors"
+	"fmt"
 	"iter"
 	"time"
 
@@ -39,12 +40,34 @@ type Record struct {
 // beside the records, never among them, so it does not shift their indices.
 type SignedCheckpoint []byte
 
+// MalformedError is how a Source reports stored bytes that break the format
+// (SPEC §3): a segment header, name, frame length or CRC that is wrong, as
+// opposed to an IO failure. Verify reports it as a MalformedRecord violation
+// and keeps the prefix it verified; any other error from a Source means
+// "could not verify" (RS-04, #93).
+//
+// From Records, Seq is the first leaf the Source could not yield: the next
+// leaf after the last one it yielded, or, before yielding any, the first leaf
+// it was asked for or the first_seq of the first segment it read. From
+// Checkpoints, Seq is not used.
+type MalformedError struct {
+	Seq uint64
+	Err error
+}
+
+func (e *MalformedError) Error() string {
+	return fmt.Sprintf("tally: malformed stored bytes at leaf %d: %v", e.Seq, e.Err)
+}
+
+func (e *MalformedError) Unwrap() error { return e.Err }
+
 // Source is the read half of a Store, which Verify reads (#27).
 type Source interface {
 	// Records yields the records from fromSeq on, in order, ending at the
 	// last durable one. An error ends the sequence; a reader must treat it as
-	// "could not read", never as the end of the log. A cancelled ctx yields
-	// ctx.Err().
+	// "could not read", never as the end of the log. A *MalformedError says
+	// the stored bytes break the format, which is a violation, not an IO
+	// failure. A cancelled ctx yields ctx.Err().
 	Records(ctx context.Context, fromSeq uint64) iter.Seq2[Record, error]
 
 	// Checkpoints yields the stored checkpoints, oldest first, with the

@@ -274,6 +274,12 @@ func Verify(ctx context.Context, src Source, keys Verifiers, opts ...VerifyOptio
 	}
 	for _, s := range sources {
 		for raw, err := range s.seq {
+			var me *MalformedError
+			if errors.As(err, &me) {
+				// The rest of this source is unreadable; what came before stands.
+				rep.Failures = append(rep.Failures, Failure{Kind: MalformedRecord, Note: "checkpoints: " + me.Err.Error()})
+				break
+			}
 			if err != nil {
 				return nil, fmt.Errorf("tally: reading checkpoints: %w", err)
 			}
@@ -312,6 +318,17 @@ func Verify(ctx context.Context, src Source, keys Verifiers, opts ...VerifyOptio
 	)
 	next := 0 // the first checkpoint not yet reached by the stream
 	for r, err := range src.Records(ctx, from) {
+		var me *MalformedError
+		if errors.As(err, &me) {
+			// Stored bytes break the format (SPEC §3): a violation at the
+			// first leaf not verified, not a failure to verify (RS-04).
+			if !read {
+				read = true
+				f, chain.size = me.Seq, me.Seq
+			}
+			broke = &violation{kind: MalformedRecord, seq: chain.size, err: me.Err}
+			break
+		}
 		if err != nil {
 			return nil, fmt.Errorf("tally: reading records: %w", err)
 		}
@@ -385,7 +402,7 @@ func Verify(ctx context.Context, src Source, keys Verifiers, opts ...VerifyOptio
 		case c.origin != origin:
 			rep.Failures = append(rep.Failures, Failure{Kind: CheckpointMismatch, Seq: c.size, Note: "a checkpoint names another origin"})
 			matched[i] = false
-		case c.size == f && f > 0:
+		case c.size == f && f > 0 && !first: // only once the boundary was read
 			if c.head == boundary {
 				matched[i] = true
 			} else {

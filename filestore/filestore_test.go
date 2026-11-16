@@ -1,7 +1,6 @@
 package filestore
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -437,8 +436,8 @@ func TestUppercaseSegmentNameIsAnError(t *testing.T) {
 }
 
 // Records checks that each segment continues the previous one: a header
-// whose prev_hash is not the previous segment's last leaf ends the read with
-// an error, and Verify never reports it as intact (RS-04).
+// whose prev_hash is not the previous segment's last leaf ends the read, and
+// Verify reports MalformedRecord there, never intact (RS-04, #93).
 //
 // Seen failing with the continuity check removed from segmentRead.run.
 func TestRecordsChecksSegmentContinuity(t *testing.T) {
@@ -455,10 +454,11 @@ func TestRecordsChecksSegmentContinuity(t *testing.T) {
 	s := mustOpen(t, dir)
 	defer func() { _ = s.Close() }()
 	rep, err := tally.Verify(context.Background(), s, verifiers(t))
-	if err == nil {
-		t.Fatalf("Verify over a broken boundary returned a report: OK=%v, want an error", rep.OK())
+	if err != nil {
+		t.Fatalf("Verify = %v; a format violation is a report, not an error (#93)", err)
 	}
-	if !bytes.Contains([]byte(err.Error()), []byte("does not continue")) {
-		t.Errorf("Verify error = %v, want the continuity failure", err)
+	if rep.OK() || rep.Size != 5 || len(rep.Failures) == 0 ||
+		rep.Failures[0].Kind != tally.MalformedRecord || rep.Failures[0].Seq != 5 {
+		t.Fatalf("Verify = %+v; want MalformedRecord at leaf 5, Size 5", rep)
 	}
 }
