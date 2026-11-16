@@ -10,6 +10,11 @@ The release workflow will refuse to publish a tag with no section here.
 
 ### Added
 
+- `seal.FileVault` (ADR-0020, SPEC §4.1): `Resolve` maps an identifier to a random 128-bit `SubjectRef` and a
+  per-subject DEK, indexed by an HMAC under a vault key, the identifier stored nowhere; `RotateKEK` rewraps every
+  DEK under a new KEK, resumably. `seal.KEK` is an interface, for a KMS; `seal.NewLocalKEK` is AES-256-GCM in
+  process. No key reaches `fmt` or an error (RS-07).
+
 - Requirements v0.3, threat model, format specification, architecture and ADR-0001 to ADR-0015. No library code.
 - `filestore`: a `tally.Store` on the local filesystem, with segments, a checkpoints file, an exclusive lock
   (`tally.ErrLocked`), and fsync of file and directory before each write returns. A directory accessible

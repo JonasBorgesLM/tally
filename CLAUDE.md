@@ -30,6 +30,7 @@ detects; it does not prevent. Nothing past the last trusted checkpoint is covere
 cmd/tally ──▶ tally, filestore, anchor
 filestore, anchor, seal, tallytest ──▶ tally ──▶ internal/wire, internal/note
 filestore ──▶ internal/fsx
+seal ──▶ internal/fsx, internal/wire
 ```
 
 - The root imports only `internal/*`. `internal/*` imports nothing above it.

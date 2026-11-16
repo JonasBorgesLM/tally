@@ -10,6 +10,7 @@ and `Anchor` could only write, though `Verify` has to read it.
 cmd/tally ──▶ tally, filestore, anchor
 filestore, anchor, seal, tallytest ──▶ tally ──▶ internal/wire, internal/note
 filestore ──▶ internal/fsx
+seal ──▶ internal/fsx, internal/wire
 ```
 
 `tally` (the root) imports no subpackage. `internal/wire`, `internal/note` and `internal/fsx`
@@ -244,7 +245,10 @@ type Vault interface {
     Shred(ctx context.Context, ref tally.SubjectRef) error                               // idempotent
 }
 
-func OpenFileVault(dir string, kek KEK, opts ...Option) (*FileVault, error)
+func OpenFileVault(ctx context.Context, dir string, kek KEK, opts ...Option) (*FileVault, error) // SPEC §4.1, ADR-0020
+func (v *FileVault) RotateKEK(ctx context.Context, next KEK) error // rewraps every DEK; resumable
+type KEK interface { ID() string; Wrap(ctx, key, aad []byte) ([]byte, error); Unwrap(ctx, wrapped, aad []byte) ([]byte, error) }
+func NewLocalKEK(id string, key []byte) (KEK, error) // AES-256-GCM in process
 func Payload(ctx context.Context, v Vault, log tally.LogID, ev tally.EventID, ref tally.SubjectRef, plaintext []byte) (tally.Payload, error) // RS-19
 
 package tallytest
