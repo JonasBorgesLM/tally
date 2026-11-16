@@ -327,3 +327,45 @@ func TestAKeyWhoseBase64ContainsAPlus(t *testing.T) {
 		t.Fatal("no seed gave a key with '+' in its base64; the test checked nothing")
 	}
 }
+
+// No fmt verb prints a Signer's private key: not on a *Signer, a Signer, or a
+// struct holding one (RS-07).
+//
+// Seen failing with priv an ed25519.PrivateKey held directly: a Signer printed
+// by value, inside a struct, or with %d, then shows the seed.
+func TestASignerNeverPrintsItsKey(t *testing.T) {
+	seed := bytes.Repeat([]byte{0xAB}, 32)
+	skey, _, err := GenerateKey(bytes.NewReader(seed), "x.example/log")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := NewSigner(skey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaks := [][]byte{
+		[]byte(skey[strings.LastIndexByte(skey, '+')+1:]), // the base64 seed
+		[]byte("171 171 171 171"),                         // the seed as fmt prints a byte slice
+		[]byte("abababab"), []byte("ABABABAB"), []byte("171"),
+	}
+	values := map[string]any{
+		"*Signer": s, "Signer": *s,
+		"struct{S Signer}": struct{ S Signer }{*s}, "struct{s Signer}": struct{ s Signer }{*s},
+		"struct{s *Signer}": struct{ s *Signer }{s},
+	}
+	checked := 0
+	for name, v := range values {
+		for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q", "%x", "%X", "%d"} {
+			out := []byte(fmt.Sprintf(verb, v))
+			checked++
+			for _, l := range leaks {
+				if bytes.Contains(out, l) {
+					t.Errorf("%s with %s prints %q: %s", name, verb, l, out)
+				}
+			}
+		}
+	}
+	if checked != 40 {
+		t.Fatalf("checked %d prints, want 40", checked)
+	}
+}

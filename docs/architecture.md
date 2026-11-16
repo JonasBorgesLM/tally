@@ -219,6 +219,7 @@ func OpenReader(dir string) (*Reader, error) // read-only Source: no lock, no re
 //   tally verify     --dir DIR --key VKEY [--anchor DIR] [--require-fully-attested] [--from FILE] [--heartbeat D --tolerance D]
 //   tally head       --dir DIR             // size and last leaf hash, unverified
 //   tally checkpoint --dir DIR --key VKEY  // the newest stored checkpoint that verifies
+//   tally keygen     --name ORIGIN --out PREFIX // PREFIX.key at 0600, PREFIX.pub; never overwrites
 
 package anchor
 
