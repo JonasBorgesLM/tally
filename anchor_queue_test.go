@@ -166,6 +166,13 @@ func TestAFullQueueDropsTheOldestAndCountsIt(t *testing.T) {
 	}
 
 	close(a.release)
+	// Let the queue drain before Close: the closing checkpoint would
+	// otherwise, correctly, push out cps[7] if it were still queued.
+	for deadline := time.Now().Add(10 * time.Second); len(a.got()) < 4; time.Sleep(time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("published %d checkpoints before Close, want 4", len(a.got()))
+		}
+	}
 	if err := l.Close(); err != nil {
 		t.Fatal(err)
 	}
