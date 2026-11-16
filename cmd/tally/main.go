@@ -6,6 +6,8 @@
 //	tally checkpoint --dir DIR --key VKEY
 //	tally keygen     --name ORIGIN --out PREFIX
 //	tally prune      --dir DIR --key VKEY --anchor DIR --checkpoint FILE
+//	tally export     --dir DIR [--format jsonl|bundle] [--out FILE] ...
+//	tally bundle-check FILE.tar
 //
 // verify, head and checkpoint only read: none takes the log's lock or
 // recovers its tail, so they run beside the application and never alter the
@@ -55,6 +57,9 @@ const usage = `usage:
   tally checkpoint --dir DIR --key VKEY [--key-file FILE]
   tally keygen     --name ORIGIN --out PREFIX
   tally prune      --dir DIR --key VKEY --anchor DIR --checkpoint FILE
+  tally export     --dir DIR [--format jsonl] [--out FILE]
+  tally export     --dir DIR --format bundle --out FILE.tar --key VKEY [--anchor DIR]
+  tally bundle-check FILE.tar
 
 exit status: 0 intact, 1 violation, 2 usage or IO error
 `
@@ -76,6 +81,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return cmdKeygen(args[1:], stdout, stderr)
 	case "prune":
 		return cmdPrune(ctx, args[1:], stdout, stderr)
+	case "export":
+		return cmdExport(ctx, args[1:], stdout, stderr)
+	case "bundle-check":
+		return cmdBundleCheck(args[1:], stdout, stderr)
 	case "-h", "--help", "help":
 		o := &output{w: stdout}
 		o.printf("%s", usage)
