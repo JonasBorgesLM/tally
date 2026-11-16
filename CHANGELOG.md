@@ -10,6 +10,10 @@ The release workflow will refuse to publish a tag with no section here.
 
 ### Added
 
+- `FileVault.Shred`, now part of `seal.Vault`: destroys a subject's DEK, durably, and is idempotent. Payloads sealed
+  under it then return `tally.ErrShredded`, the log still verifies, and a later `Resolve` makes a new, unlinked ref
+  (RF-11, RF-12). Removing a file does not destroy its bytes on an SSD, and a vault backup undoes a shred.
+
 - `seal.Vault`, `FileVault.Seal` and `Open`, and `seal.Payload`: AES-256-GCM under a subject's DEK, a random 96-bit
   nonce, and SPEC §4's length-prefixed AAD binding `log_id`, `event_id` and `subject_ref` (RS-12, RS-19). A shredded
   ref is `tally.ErrShredded`; any other mismatch is `seal.ErrOpen`. `seal.AAD` rebuilds the AAD to open a stored
