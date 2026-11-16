@@ -207,6 +207,7 @@ package filestore
 
 func Open(ctx context.Context, dir string, opts ...Option) (*Store, error) // lock, recovery
 func (s *Store) Prune(ctx context.Context, cp tally.SignedCheckpoint, keys tally.Verifiers) (removed int, err error)
+func OpenReader(dir string) (*Reader, error) // read-only Source: no lock, no recovery, never writes (#93)
 
 package anchor
 
@@ -272,4 +273,7 @@ honest restart look like a rollback.
 ### Verify
 
 SPEC §7. Streaming, O(1) memory (RNF-04); a parse error is a violation (RS-04), and an unreadable file is the
-`error` return, never a `Report` that says OK.
+`error` return, never a `Report` that says OK. A `Source` tells the two apart: stored bytes that break the
+format (SPEC §3) come back as a `*tally.MalformedError`, which `Verify` reports as `MalformedRecord` at the first leaf
+not verified, and any other error is an IO failure. An auditor reads a directory with `filestore.OpenReader`, which
+never takes the lock or recovers, so verifying evidence does not alter it.

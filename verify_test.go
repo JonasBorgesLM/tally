@@ -351,3 +351,58 @@ func TestAnUntrustedStartIsNamed(t *testing.T) {
 		t.Fatalf("Verify = %v, want ErrUntrustedStart", err)
 	}
 }
+
+// A Source's MalformedError is a MalformedRecord violation at the first leaf
+// not verified, with Size the verified prefix, never Verify's error (RS-04,
+// #93). A plain error is still "could not verify".
+//
+// Seen failing with the MalformedError conversion removed from the record
+// loop, and, for the case before any record, with the guard on the boundary
+// comparison removed: a checkpoint of size f is then compared with a
+// boundary never read and reported as a fork.
+func TestAMalformedSourceIsAViolation(t *testing.T) {
+	bad := errors.New("a frame fails its CRC")
+	cases := []struct {
+		name  string
+		keep  int // records the source yields before the error
+		at    uint64
+		plain bool
+	}{
+		{"in the middle", 3, 3, false},
+		{"at the genesis", 0, 0, false},
+		{"before any record of a pruned log", 0, 4, false},
+		{"an IO error", 3, 0, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			src := honestLog(t, 5, 3)
+			src.recs = src.recs[:c.keep]
+			if c.plain {
+				src.err = bad
+			} else {
+				src.err = &tally.MalformedError{Seq: c.at, Err: bad}
+			}
+			rep, err := tally.Verify(context.Background(), src, testKeys(t))
+			if c.plain {
+				if !errors.Is(err, bad) || rep != nil {
+					t.Fatalf("Verify = %+v, %v; want the IO error", rep, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Verify = %v; want a report", err)
+			}
+			if rep.OK() || rep.Size != c.at || rep.Failures[len(rep.Failures)-1].Kind == tally.ForkDetected ||
+				!slices.ContainsFunc(rep.Failures, func(f tally.Failure) bool {
+					return f.Kind == tally.MalformedRecord && f.Seq == c.at
+				}) {
+				t.Fatalf("Verify = %+v; want MalformedRecord at %d and Size %d, and no fork", rep, c.at, c.at)
+			}
+			for _, f := range rep.Failures {
+				if f.Kind == tally.ForkDetected || f.Kind == tally.CheckpointMismatch {
+					t.Errorf("a checkpoint was compared with bytes never read: %+v", f)
+				}
+			}
+		})
+	}
+}

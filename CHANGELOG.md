@@ -25,6 +25,11 @@ The release workflow will refuse to publish a tag with no section here.
   `filestore.WithPreallocation` reserves each new segment's blocks on Linux, and fails `Open` with
   `ErrPreallocationUnsupported` on macOS, where it would need `unsafe`.
 - A draft RUNBOOK entry for a full disk.
+- `tally.MalformedError`: a `Source` reports stored bytes that break the format, and `Verify` turns it into a
+  `MalformedRecord` violation at the first leaf not verified instead of its error (RS-04). `filestore` reports
+  every format fault of a segment or the checkpoints file this way.
+- `filestore.OpenReader`, a read-only `Source` that never takes the lock, recovers or writes, for verifying a
+  directory as it is, damage included.
 - `filestore.Store.Prune` removes the segments wholly below a checkpoint that verifies and agrees with the
   log, after writing it to the prune marker `pruned.tlc` (SPEC §3.5, ADR-0012). It cannot tell whether the
   checkpoint was anchored (RS-20). `tally.Open` opens a pruned store, starting at its first record.
