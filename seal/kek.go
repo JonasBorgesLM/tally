@@ -3,10 +3,13 @@
 // (DEK), so that only the ref enters the log and destroying the DEK makes the
 // payloads sealed under it unreadable, without touching the chain.
 //
-// It is a mechanism, not compliance. A shredded ref still links its entries
-// to one another, deleting a file on an SSD or a journaling filesystem does
-// not destroy it, and an old backup of the vault undoes a shred. #46 documents
-// these limits in full.
+// It is a mechanism, not compliance: whether a deployment conforms to the LGPD
+// depends on the operator's process and legal counsel. A shredded ref still
+// links its entries to one another, deleting a file on an SSD or a journaling
+// filesystem does not destroy it, an old backup of the vault undoes a shred,
+// and copies of a plaintext in the application's memory are out of reach. The
+// README's "Personal data and crypto-shredding" states each limit, with a
+// classification of every stored field, and the RUNBOOK the procedure.
 package seal
 
 import (

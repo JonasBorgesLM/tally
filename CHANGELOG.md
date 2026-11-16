@@ -10,6 +10,10 @@ The release workflow will refuse to publish a tag with no section here.
 
 ### Added
 
+- README, "Personal data and crypto-shredding": what every stored field may hold and which are in clear, and each
+  limit of a shred, without a claim of LGPD compliance. RUNBOOK: a draft procedure for shredding a subject, vault
+  backups, and narrowing what the medium keeps.
+
 - `FileVault.Shred`, now part of `seal.Vault`: destroys a subject's DEK, durably, and is idempotent. Payloads sealed
   under it then return `tally.ErrShredded`, the log still verifies, and a later `Resolve` makes a new, unlinked ref
   (RF-11, RF-12). Removing a file does not destroy its bytes on an SSD, and a vault backup undoes a shred.

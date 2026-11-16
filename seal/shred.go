@@ -26,7 +26,7 @@ import (
 //
 // **Removing a file does not destroy its bytes** on an SSD or a journaling
 // filesystem, and a backup of the vault from before the shred undoes it
-// (ADR-0020, R-34; #46 documents every limit).
+// (ADR-0020, R-34; the README states every limit).
 func (v *FileVault) Shred(ctx context.Context, ref tally.SubjectRef) error {
 	if err := ctx.Err(); err != nil {
 		return err
