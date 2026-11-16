@@ -127,6 +127,13 @@ func (f *recFile) Truncate(size int64) error {
 	return f.File.Truncate(size)
 }
 
+func (r *recFS) Rename(oldpath, newpath string) error {
+	if err := r.op("rename " + filepath.Base(oldpath) + " " + filepath.Base(newpath)); err != nil {
+		return err
+	}
+	return r.FS.Rename(oldpath, newpath)
+}
+
 func (r *recFS) Remove(name string) error {
 	if err := r.op("remove " + filepath.Base(name)); err != nil {
 		return err

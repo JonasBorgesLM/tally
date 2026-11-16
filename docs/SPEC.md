@@ -143,7 +143,7 @@ A log is a directory of segments named `NNNNNNNNNNNNNNNN.tlog`: the first `seq` 
 exactly 16 lowercase hex digits. Segments are contiguous and ordered by that number.
 
 - A verifier reads only files whose names match that pattern exactly. Other files in the directory
-  (the checkpoints file of §3.4, the lock file, quarantine files, the prune marker) are not segments.
+  (the checkpoints file of §3.4, the lock file, quarantine files, the prune marker of §3.5) are not segments.
 - A file whose name matches the pattern except for uppercase hex digits is a violation, not a foreign
   file, so that renaming cannot hide a segment.
 - The name MUST equal the header's `first_seq`.
@@ -237,6 +237,21 @@ still catches a record removed below it.
 
 These checkpoints come from the host being verified. They are worth what §7.1 says such checkpoints
 are worth; an anchor (§7 input) is what makes one trustworthy.
+
+### 3.5 Prune marker
+
+A writer that prunes (RF-14, ADR-0012) removes only leading segments whose every record is below the
+`size` of a checkpoint that verifies, that is, segments followed by one whose `first_seq` is at most
+that `size`. It never removes the last segment, so the segment holding record `size - 1` stays.
+
+**(writer)** Before removing any segment, the writer stores that checkpoint's signed note (§5.1), as
+its exact bytes, in `pruned.tlc`, written atomically: a temporary file, fsync, rename, directory
+fsync (RS-10). It then removes the segments oldest first and fsyncs the directory, so a crash leaves a
+contiguous segment set starting at a later segment. A later prune replaces the marker. Quarantine files
+and the checkpoints file are never removed.
+
+The marker is for the operator. **A verifier never reads it** (§7 step 7): a host-written file proves
+nothing, and a pruned log verifies only with a trusted checkpoint at or above its first segment.
 
 ## 4. Sealing
 

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -223,10 +224,22 @@ func Open(ctx context.Context, s Store, signer Signer, opts ...Option) (*Log, er
 // load reads the stored chain into l.head, or writes a genesis on an empty
 // store.
 func (l *Log) load(ctx context.Context, origin string) error {
+	first := true
 	for r, err := range l.store.Records(ctx, 0) {
 		if err != nil {
 			return fmt.Errorf("tally: reading the stored log: %w", err)
 		}
+		if first && r.Seq > 0 {
+			// A pruned store (#35): the first record stands in for its
+			// predecessor, as a segment header does for Verify (SPEC §7 step
+			// 4). The origin is the signer's, since the genesis is gone.
+			e, ok := startEntry(r.Body)
+			if !ok {
+				return fmt.Errorf("tally: the first stored record, %d, is not a valid entry", r.Seq)
+			}
+			l.head = chainState{size: r.Seq, logID: e.logID, origin: origin, prevLeaf: e.prevHash, prevTime: math.MinInt64}
+		}
+		first = false
 		if r.Seq != l.head.size {
 			return fmt.Errorf("tally: the store returned seq %d at leaf %d", r.Seq, l.head.size)
 		}
