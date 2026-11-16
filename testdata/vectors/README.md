@@ -73,19 +73,44 @@ Points that are easy to get wrong:
   still wrong.
 - **The size counts leaves, genesis included.** Four entries make a size of 5 (§2.4).
 
+## `segments.json`
+
+`records.json` and the checkpoint of `checkpoints.json` as a writer stores them on disk (SPEC §3), each
+file as `hex` under its `name`:
+
+| File | What it holds |
+| --- | --- |
+| `0000000000000000.tlog` | The header (§3.1: `first_seq` 0, `prev_hash` all zero) and the five records, framed (§3.2). |
+| `checkpoints.tlc` | The header (§3.4) and the one checkpoint, framed. |
+| `0000000000000005.tlog` | A header and no frame: `first_seq` 5 and `prev_hash` the last record's `leaf_hash_hex`. A writer starts it right after storing the checkpoint of size 5 (ADR-0019). |
+
+To check an implementation: read the records and the checkpoint out of these files and verify them as
+`checkpoints.json` says. A writer given the same records and checkpoint, and rotating at it, produces
+these bytes.
+Every frame's CRC was also recomputed outside Go, with a bitwise CRC-32C checked against the
+standard check value `0xE3069283` for `"123456789"`.
+
+Points that are easy to get wrong:
+
+- **A frame's CRC is CRC-32C (Castagnoli)**, not the IEEE CRC-32 most libraries default to.
+- **The header-only segment is valid only as the last one** (§3), and its `prev_hash` is what the
+  checkpoint of size 5 is matched against (§7 step 5).
+
 ## Not here yet
 
-- **Segment files** (SPEC §3) come with the file store (#33).
+- **Sealing vectors** come with #44.
 
 ## How they are made
 
-`TestRecordVectors`, `TestKeyVectors` and `TestCheckpointVectors` (in the `*vectors_test.go` files) compare these
+`TestRecordVectors`, `TestKeyVectors`, `TestCheckpointVectors` and `filestore`'s `TestSegmentVectors` (in the
+`*vectors_test.go` files) compare these
 files with the implementation on every run, and never rewrite them. A suite that regenerated vectors
 would update them silently on a format break, which is the one change they exist to catch. To
 regenerate them after a deliberate format change:
 
 ```bash
 go test -run 'TestRecordVectors|TestKeyVectors|TestCheckpointVectors' -write-vectors .
+go test -run TestSegmentVectors -write-vectors ./filestore
 ```
 
 Then review the diff. A format change updates `docs/SPEC.md` and these vectors in the same pull request.

@@ -27,7 +27,7 @@ func (s *genSource) Records(_ context.Context, from uint64) iter.Seq2[Record, er
 			yield(Record{}, err)
 			return
 		}
-		prev := leafHash(body)
+		prev := LeafHash(body)
 		if from == 0 && !yield(Record{Seq: 0, Body: body}, nil) {
 			return
 		}
@@ -40,7 +40,7 @@ func (s *genSource) Records(_ context.Context, from uint64) iter.Seq2[Record, er
 				yield(Record{}, err)
 				return
 			}
-			prev = leafHash(body)
+			prev = LeafHash(body)
 			if !yield(Record{Seq: uint64(i), Body: body}, nil) {
 				return
 			}

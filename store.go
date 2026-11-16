@@ -5,10 +5,26 @@ import (
 	"errors"
 	"iter"
 	"time"
+
+	"github.com/JonasBorgesLM/tally/internal/note"
 )
 
 // ErrClosed is returned by a Log or a Store used after Close.
 var ErrClosed = errors.New("tally: closed")
+
+// ErrLocked is returned when opening a log that another writer holds open, in
+// this process or another (RS-09). filestore returns it; it is declared here
+// so that a caller can test for it without importing filestore.
+var ErrLocked = errors.New("tally: log locked by another writer")
+
+// Size ceilings of SPEC §6, which a Store reading untrusted bytes checks a
+// length prefix against before it allocates (RS-05).
+const (
+	// MaxRecordLen is the frame ceiling: no valid record body is longer.
+	MaxRecordLen = 16<<20 + 2<<10
+	// MaxCheckpointLen is the ceiling of a signed checkpoint note.
+	MaxCheckpointLen = note.MaxSize
+)
 
 // Record is one leaf as a Store holds it: its index and its stored bytes
 // (SPEC §2). The bytes are hashed as they are (RS-03), so a Store returns
@@ -48,7 +64,10 @@ type Source interface {
 // error may leave part of the batch stored; recovery on the next open deals
 // with it.
 //
-// PutCheckpoint must return only once cp is durable. A checkpoint is stored
+// PutCheckpoint must return only once cp is durable. cp covers every record
+// stored: its size is one past the last record AppendBatch stored, so a Store
+// may treat the call as a safe point to start a new file (ADR-0019). A
+// checkpoint is stored
 // before it is published to any anchor, so that an honest restart never finds
 // an anchored checkpoint it does not have, which would look like a rollback.
 // An error poisons the Log as AppendBatch's does.

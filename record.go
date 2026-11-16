@@ -99,10 +99,11 @@ type entry struct {
 
 func (*entry) recordType() uint8 { return typeEntry }
 
-// leafHash is the RFC 6962 leaf hash of a stored record body (SPEC §2.3). It
-// takes the bytes as stored, never a re-encoding (RS-03): hashing a
-// reconstruction would make a non-canonical encoding invisible.
-func leafHash(body []byte) [32]byte {
+// LeafHash is the RFC 6962 leaf hash of a stored record body (SPEC §2.3):
+// SHA-256(0x00 || body). A segment header's prev_hash and a checkpoint's head
+// are leaf hashes. It takes the bytes as stored, never a re-encoding (RS-03):
+// hashing a reconstruction would make a non-canonical encoding invisible.
+func LeafHash(body []byte) [32]byte {
 	h := sha256.New()
 	h.Write([]byte{0x00})
 	h.Write(body)
@@ -155,6 +156,25 @@ func encodeFields(r record) ([]byte, error) {
 		return nil, fmt.Errorf("%w: %w", errMalformed, err)
 	}
 	return b, nil
+}
+
+// RecordLogID returns the log_id of a stored record body, a genesis or an
+// entry, after decoding it strictly and applying the rules of SPEC §2 that
+// need no other record. A Store uses it to write a segment header (SPEC §3.1);
+// it says nothing about whether the record belongs to the chain.
+func RecordLogID(body []byte) (LogID, error) {
+	r, err := decodeRecord(body)
+	if err != nil {
+		return LogID{}, err
+	}
+	switch r := r.(type) {
+	case *genesis:
+		return r.logID, nil
+	case *entry:
+		return r.logID, nil
+	default:
+		return LogID{}, fmt.Errorf("%w: unknown record", errMalformed)
+	}
 }
 
 // decodeRecord decodes a stored body strictly (SPEC §1) and applies the

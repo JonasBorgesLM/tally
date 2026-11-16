@@ -143,12 +143,15 @@ A log is a directory of segments named `NNNNNNNNNNNNNNNN.tlog`: the first `seq` 
 exactly 16 lowercase hex digits. Segments are contiguous and ordered by that number.
 
 - A verifier reads only files whose names match that pattern exactly. Other files in the directory
-  (checkpoints, quarantine files, the prune marker) are not segments.
+  (the checkpoints file of §3.4, the lock file, quarantine files, the prune marker) are not segments.
 - A file whose name matches the pattern except for uppercase hex digits is a violation, not a foreign
   file, so that renaming cannot hide a segment.
 - The name MUST equal the header's `first_seq`.
 - A segment holding a header and no frames is valid only as the last segment; a writer that has just
   rotated produces one.
+- **(writer)** A writer starts a new segment only right after it has durably stored a checkpoint whose
+  `size` is the new segment's `first_seq` (ADR-0019). Every segment boundary above 0 therefore has a
+  stored checkpoint whose `head` is that segment header's `prev_hash` (§7 step 5).
 
 ### 3.1 Header
 
@@ -201,6 +204,24 @@ remove a record that checkpoint covers, opening fails.
 and `<offset>` is the byte offset of the first removed byte, as 16 lowercase hex digits. Quarantined
 bytes are part of an audit bundle. A short or bad tail and a flipped bit in the last acknowledged entry
 can be indistinguishable; quarantine preserves the evidence without settling it.
+
+### 3.4 Checkpoints file
+
+A writer stores its own checkpoints in `checkpoints.tlc`, beside the segments, oldest first. A checkpoint
+is not a leaf, so it is never framed into a segment, where it would shift every later index.
+
+```
+magic      [8]byte  = "TALLYCPT"
+version    uint8    = 1
+```
+
+The 9-byte header is followed by frames as in §3.2, each body a signed note (§5.1) whose `len` is
+checked against the checkpoint note ceiling (§6) before the body is read. A missing file means no
+local checkpoint. A file shorter than its header, or with the wrong `magic` or `version`, is a
+violation. Its tail is classified as the last segment's is (§3.3).
+
+These checkpoints come from the host being verified. They are worth what §7.1 says such checkpoints
+are worth; an anchor (§7 input) is what makes one trustworthy.
 
 ## 4. Sealing
 
@@ -451,7 +472,9 @@ hash. [`keys.json`](../testdata/vectors/keys.json) is a public test key in both 
 its seed and key id, and a note it signed (§5.1).
 [`checkpoints.json`](../testdata/vectors/checkpoints.json) is a §5.2 checkpoint over the head of
 `records.json`, signed with that key; the records and it verify (§7) with the whole log attested.
-Segment files are added with the file store (#33). Sealing vectors need a fixed DEK and nonce as
+[`segments.json`](../testdata/vectors/segments.json) is `records.json` and that checkpoint as a writer stores
+them (§3): segment 0 holding the five records, the checkpoints file, and the header-only segment 5 that
+the writer starts after the checkpoint (§3, ADR-0019), each file as hex. Sealing vectors need a fixed DEK and nonce as
 inputs, and are added with #44. Conformance to §5 is tested
 against `golang.org/x/mod/sumdb/note` (#30). That package accepts up to 100 signatures and no size limit,
 so the differential test expects tally to reject notes it accepts above §6's limits, and never the

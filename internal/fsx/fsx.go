@@ -41,6 +41,9 @@ type FS interface {
 	OpenFile(name string, flag int, perm fs.FileMode) (File, error)
 	Rename(oldpath, newpath string) error
 	Remove(name string) error
+	Mkdir(name string, perm fs.FileMode) error
+	ReadDir(name string) ([]fs.DirEntry, error)
+	Stat(name string) (fs.FileInfo, error)
 
 	// Lock takes an exclusive, non-blocking lock on name, creating it with
 	// mode 0600 if it does not exist. If the lock is held it returns an error
@@ -61,6 +64,15 @@ func (OS) Rename(oldpath, newpath string) error { return os.Rename(oldpath, newp
 
 // Remove is os.Remove.
 func (OS) Remove(name string) error { return os.Remove(name) }
+
+// Mkdir is os.Mkdir.
+func (OS) Mkdir(name string, perm fs.FileMode) error { return os.Mkdir(name, perm) }
+
+// ReadDir is os.ReadDir: the entries sorted by name.
+func (OS) ReadDir(name string) ([]fs.DirEntry, error) { return os.ReadDir(name) }
+
+// Stat is os.Stat.
+func (OS) Stat(name string) (fs.FileInfo, error) { return os.Stat(name) }
 
 // SyncDir fsyncs the directory dir, so that entries created, renamed or
 // removed in it survive a crash. Without it a new file can vanish after a
