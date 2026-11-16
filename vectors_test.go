@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"os"
 	"testing"
@@ -118,7 +119,7 @@ func toVector(t *testing.T, name string, r record) recordVector {
 	if err != nil {
 		t.Fatalf("%s: %v", name, err)
 	}
-	leaf := leafHash(body)
+	leaf := LeafHash(body)
 	v := recordVector{Name: name, BodyHex: hex.EncodeToString(body), LeafHash: hex.EncodeToString(leaf[:])}
 	switch r := r.(type) {
 	case *genesis:
@@ -238,7 +239,7 @@ func TestRecordVectors(t *testing.T) {
 				t.Fatalf("decoded fields differ from the committed ones")
 			}
 			// The leaf hash is of the committed bytes.
-			if leaf := leafHash(body); hex.EncodeToString(leaf[:]) != v.LeafHash {
+			if leaf := LeafHash(body); hex.EncodeToString(leaf[:]) != v.LeafHash {
 				t.Fatalf("leaf hash %x, committed %s", leaf, v.LeafHash)
 			}
 			// And the generator still produces this record.
@@ -302,5 +303,42 @@ func TestVectorsCoverEveryKind(t *testing.T) {
 	if genesisCount != 1 || len(actors) != 3 || len(payloads) != 3 || len(outcomes) != 4 {
 		t.Fatalf("coverage: %d genesis, actor kinds %v, payload kinds %v, outcomes %v",
 			genesisCount, actors, payloads, outcomes)
+	}
+}
+
+// RecordLogID returns each vector's log_id, genesis and entries alike, and
+// refuses bytes that are not a record. A Store writes it into a segment
+// header (SPEC §3.1).
+func TestRecordLogID(t *testing.T) {
+	raw, err := os.ReadFile(recordVectorsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var f vectorFile
+	if err := json.Unmarshal(raw, &f); err != nil {
+		t.Fatal(err)
+	}
+	checked := 0
+	for _, v := range f.Records {
+		var want string
+		if v.Genesis != nil {
+			want = v.Genesis.LogID
+		} else {
+			want = v.Entry.LogID
+		}
+		id, err := RecordLogID(unhex(t, v.BodyHex))
+		if err != nil {
+			t.Fatalf("%s: %v", v.Name, err)
+		}
+		if got := hex.EncodeToString(id[:]); got != want {
+			t.Errorf("%s: log_id %s, want %s", v.Name, got, want)
+		}
+		checked++
+	}
+	if checked != 5 {
+		t.Fatalf("checked %d vectors, want 5", checked)
+	}
+	if _, err := RecordLogID([]byte{1, 2, 3}); !errors.Is(err, errMalformed) {
+		t.Errorf("RecordLogID(garbage) = %v, want errMalformed", err)
 	}
 }

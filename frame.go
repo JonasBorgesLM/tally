@@ -12,12 +12,7 @@ import (
 // it, so it is never evidence of anything. Classifying a bad tail on opening
 // (§3.3) is the store's job; here every bad frame is a violation.
 
-const (
-	frameOverhead = 4 + 4
-	// maxFrameLen is SPEC §6's frame ceiling. The largest valid ENTRY body is
-	// under it.
-	maxFrameLen = 16<<20 + 2<<10
-)
+const frameOverhead = 4 + 4
 
 var (
 	errFrameTruncated = errors.New("tally: frame runs past the end of the input")
@@ -33,7 +28,7 @@ func castagnoli() *crc32.Table {
 // appendFrame appends body to dst as one frame. body must be within the frame
 // ceiling, which every encodable record is.
 func appendFrame(dst, body []byte) []byte {
-	dst = binary.BigEndian.AppendUint32(dst, uint32(len(body))) // #nosec G115 -- records are under maxFrameLen, far below 2^32.
+	dst = binary.BigEndian.AppendUint32(dst, uint32(len(body))) // #nosec G115 -- records are under MaxRecordLen, far below 2^32.
 	dst = append(dst, body...)
 	return binary.BigEndian.AppendUint32(dst, crc32.Checksum(body, castagnoli()))
 }
@@ -46,7 +41,7 @@ func readFrame(b []byte) (body, rest []byte, err error) {
 		return nil, nil, fmt.Errorf("%w: %w", errMalformed, errFrameTruncated)
 	}
 	n := binary.BigEndian.Uint32(b)
-	if n > maxFrameLen {
+	if n > MaxRecordLen {
 		return nil, nil, fmt.Errorf("%w: %w", errMalformed, errFrameTooLong)
 	}
 	if uint64(len(b)) < uint64(n)+frameOverhead {

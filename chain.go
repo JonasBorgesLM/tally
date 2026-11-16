@@ -116,7 +116,7 @@ func (c *chainState) add(body []byte) (record, *violation) {
 	case *entry:
 		c.prevTime = r.recordedAt
 	}
-	c.prevLeaf = leafHash(body)
+	c.prevLeaf = LeafHash(body)
 	c.size++
 	return r, nil
 }

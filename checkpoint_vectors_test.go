@@ -63,7 +63,7 @@ func makeCheckpointVector(t *testing.T, bodies [][]byte) checkpointVector {
 	if err != nil {
 		t.Fatal(err)
 	}
-	head := leafHash(bodies[len(bodies)-1])
+	head := LeafHash(bodies[len(bodies)-1])
 	// recorded_at: the head entry's, from records.json, in SPEC §5.2's layout.
 	text := checkpointText("example.com/log", uint64(len(bodies)), head, 0x0102030405060708+40, stateClosed)
 	msg, err := note.Sign([]byte(text), s)

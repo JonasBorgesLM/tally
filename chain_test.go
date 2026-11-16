@@ -40,7 +40,7 @@ func (b *logBuilder) raw(r record) {
 	start := len(b.buf)
 	b.buf = appendFrame(b.buf, body)
 	b.frames = append(b.frames, frameSpan{start: start, crc: len(b.buf) - 4})
-	b.prev = leafHash(body)
+	b.prev = LeafHash(body)
 }
 
 // entry appends an honest successor, after mutate has had its say.
@@ -331,7 +331,7 @@ func TestEmptyLogIsNotAVerifiedLog(t *testing.T) {
 //
 // Negative control: removing the ceiling check in readFrame made this fail.
 func TestFrameLengthCeiling(t *testing.T) {
-	log := binary.BigEndian.AppendUint32(nil, maxFrameLen+1)
+	log := binary.BigEndian.AppendUint32(nil, MaxRecordLen+1)
 	_, _, err := readFrame(log)
 	if !errors.Is(err, errFrameTooLong) {
 		t.Fatalf("readFrame = %v, want errFrameTooLong", err)

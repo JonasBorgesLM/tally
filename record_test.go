@@ -84,7 +84,7 @@ func TestLeafHashMatchesIndependentVector(t *testing.T) {
 		{"entry", goldenEntryHex, goldenEntryLeaf},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := leafHash(unhex(t, tc.body))
+			got := LeafHash(unhex(t, tc.body))
 			if hex.EncodeToString(got[:]) != tc.leaf {
 				t.Fatalf("leafHash = %x, want %s", got, tc.leaf)
 			}

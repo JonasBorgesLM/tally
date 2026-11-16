@@ -527,7 +527,7 @@ func (l *Log) commit(batch []*request) {
 	l.head = next
 	leaves := make([][32]byte, len(recs))
 	for i, r := range accepted {
-		leaves[i] = leafHash(recs[i].Body)
+		leaves[i] = LeafHash(recs[i].Body)
 		l.window.add(string(r.entry.eventID), seen{seq: recs[i].Seq, leaf: leaves[i], fingerprint: fps[i]})
 		r.reply <- reply{receipt: Receipt{Seq: recs[i].Seq, LeafHash: leaves[i]}}
 	}
