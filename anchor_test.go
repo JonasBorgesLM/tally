@@ -139,7 +139,9 @@ func TestT07RewriteWithTheKeyIsAForkAgainstTheAnchor(t *testing.T) {
 // open checkpoint, and the same pause is a gap, for a human to judge.
 //
 // Negative controls: removing the gap check made the crash case pass;
-// ignoring the closed state made the clean case fail.
+// ignoring the closed state made the clean case fail. A closed and an open checkpoint
+// can share an instant (a clock regression repeats it); with the state tie-break
+// removed from the sort, the anchor listing the closed one first reported a gap.
 func TestT15HeartbeatGaps(t *testing.T) {
 	src := honestLog(t, 2)
 	head := leaf(src.recs[2].Body)
@@ -173,6 +175,14 @@ func TestT15HeartbeatGaps(t *testing.T) {
 			anchor:  anchorList{cp(t0, "open")},
 			now:     t0.Add(10 * time.Minute),
 			wantGap: true,
+		},
+		"a clean close at the instant of the last open checkpoint, the anchor listing the closed one first": {
+			anchor: anchorList{cp(t0, "closed"), cp(t0, "open")},
+			now:    t0.Add(10 * time.Minute),
+		},
+		"a clean close at the instant of the last open checkpoint, the anchor listing it last": {
+			anchor: anchorList{cp(t0, "open"), cp(t0, "closed")},
+			now:    t0.Add(10 * time.Minute),
 		},
 		"stopped cleanly and still stopped": {
 			anchor: anchorList{cp(t0, "closed")},
