@@ -1,8 +1,8 @@
 # tally runbook
 
 Operating procedures, each written once it could be exercised rather than guessed, and each saying
-what it was executed against. **This is a draft:** key rotation, and a draft of disk full (#37), are here. Host compromise, a
-poisoned log, shredding and vault backups, and prune come with #50.
+what it was executed against. **This is a draft:** key rotation, and drafts of disk full (#37) and shredding a subject (#46), are here.
+Host compromise, a poisoned log, prune, and the rest of vault operations come with #50.
 
 ## Key rotation
 
@@ -100,3 +100,43 @@ Never delete quarantine files (`quarantine-*.bin`) to make room: they are eviden
 A disk-full failure is a failed write, which loses nothing acknowledged: no receipt was returned for
 the entry that did not fit. If the failure was an fsync error rather than `ENOSPC`, R-31 applies:
 treat the most recent entries as suspect.
+
+## Shredding a subject (draft, #46)
+
+A shred destroys a subject's key, so the payloads sealed under it no longer open (`tally.ErrShredded`), and
+the log still verifies. It erases the details; it does not erase that the subject acted. The limits are in
+the README's ["Personal data and crypto-shredding"](../README.md#personal-data-and-crypto-shredding), and
+none of this is legal advice: whether a request is satisfied is for the operator and counsel to decide.
+Exercised against `seal`'s tests (`shred_test.go`), not yet against a production vault; #50 finishes it.
+
+### Before the first request
+
+1. **Keep the vault apart from the log:** another directory and credential, preferably another host. A
+   reader of the log must not also read the vault.
+2. **Decide how long vault backups live.** Every backup taken before a shred undoes it, for as long as the
+   backup exists. A shred is only effective once the last backup that predates it is gone, so the
+   retention period is part of the answer to a person who asks.
+3. **Keep the KEK out of the backups,** so that a stolen backup is ciphertext.
+
+### Shredding
+
+1. **Find the ref:** `vault.Resolve(ctx, identifier)`, with the identifier normalized exactly as the
+   application normalizes it when it seals. `Resolve` creates a ref for an identifier it has not seen;
+   shredding that new ref is harmless.
+2. **Shred it:** `vault.Shred(ctx, ref)`. It is durable when it returns, and safe to repeat.
+3. **Record that it happened,** without the identifier: an entry in the log whose actor is the system or
+   the service that shredded, and whose resource names the request, not the person.
+4. **Verify the log.** It must still verify: a shred changes no stored byte.
+5. **Note the date.** The shred is complete once the last vault backup older than this date is gone.
+
+### Narrowing what the medium keeps
+
+A removed file can survive on an SSD or under a journaling filesystem, and a wrapped key recovered from it
+opens with the KEK that wrapped it. After a shred, or a batch of them:
+
+1. Rotate the KEK: `vault.RotateKEK(ctx, next)`. Every key still in the vault is rewrapped under `next`.
+2. Destroy the old KEK, and every copy of it, once the rotation has completed and no backup you keep needs
+   it. A key recovered from the medium is then wrapped under a KEK that no longer exists.
+
+This narrows the window to the time between the shred and the destruction of the old KEK. It does not
+close it: whoever copied the medium and the old KEK before then still holds both.

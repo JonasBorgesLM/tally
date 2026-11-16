@@ -55,6 +55,48 @@ In each recipe, the auditor verifies against the copy off the host, with `tally.
 opened on it. Read on the host, a spool says only what the host chose to leave there. The pull or upload
 interval adds to the window in which the newest entries are unprotected.
 
+## Personal data and crypto-shredding
+
+The log is immutable, so personal data cannot be deleted from it. tally keeps people out of it instead:
+a person enters only as a `SubjectRef`, 128 random bits from a vault (`seal`), and what identifies them goes
+in a payload sealed under that subject's key. Destroying the key, a **shred**, makes those payloads
+unreadable and leaves the chain intact, so the log still verifies.
+
+**What each stored field holds** (SPEC §2.2). Everything except a sealed payload is in clear, for as long
+as the log exists:
+
+| Field | Stored | What it may hold |
+| --- | --- | --- |
+| `log_id`, `seq`, `prev_hash` | in clear | Nothing about a person, by construction. |
+| `recorded_at` | in clear | The host's clock when the entry was written. |
+| `occurred_at` | in clear | The caller's claim of when the action happened. A time a person acted is still metadata about them. |
+| `event_id` | in clear | Random or opaque. Never derive it from personal data: a hash of an email is reversed by hashing guesses. |
+| actor (`actor_kind`, `actor_id`) | in clear | A `SubjectRef`, a service name, or the system. A person enters only as a `SubjectRef` (RS-14). A service name refuses `@` and whitespace (RS-18), so it refuses an email, but not a CPF passed off as a service: that is digits. |
+| `action` | in clear | A dotted lowercase name of what happened, never to whom. |
+| `resource` | in clear | What was acted on. It must hold no personal data. RS-18 refuses `@` and whitespace, which catches an email but not a CPF, which is digits. |
+| `outcome` | in clear | Success, failure, denied or error. |
+| `subject_ref` | in clear | Whose sealed payload this is. |
+| plain payload | in clear | Never personal data; seal it instead. |
+| sealed payload | encrypted | The details: an IP, a user agent, an email, a reason. A shred makes it unreadable. |
+
+**What a shred does not do.** tally provides a mechanism. It does not make a deployment conform to the LGPD
+or any other law: that depends on the operator's process and must be validated with legal counsel.
+
+- **The ref still links the subject's entries to each other.** A shred removes the mapping from the ref to
+  the person, not the entries. Their actions, resources and timing remain, and a pattern can re-identify
+  someone, so what remains may still be personal data (T-20).
+- **A vault backup from before the shred undoes it.** The backup still holds the key.
+- **Deleting a file does not destroy its bytes** on an SSD or a journaling filesystem. A wrapped key
+  recovered from the medium, together with a later compromise of the KEK that wrapped it, opens the
+  payloads again. Rotating the KEK, and destroying the old one, narrows this; it does not close it.
+- **Copies in memory are out of the library's control.** A plaintext held by the application, swapped to
+  disk, or left behind by the garbage collector is not erased by a shred, and Go cannot promise to erase
+  any of it.
+- **Whatever the application put in clear stays.** A `resource` or `event_id` that carries personal data,
+  through a mistake RS-18 cannot catch, is in the log for good.
+
+The procedure, and how to handle vault backups, is in the [RUNBOOK](docs/RUNBOOK.md#shredding-a-subject-draft-46).
+
 ## Documents
 
 | | |
