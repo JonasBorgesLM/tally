@@ -174,6 +174,11 @@ cannot inspect any of this.
 **Mitigation:** RF-20: nothing below the last local checkpoint is truncated, truncated bytes are quarantined and reported, and RF-09 catches anything below an anchored checkpoint.
 **Residual:** a torn write and a flipped bit in the last acknowledged entry can look identical, so one acknowledged entry past the last checkpoint can be lost without proof it was malicious. Quarantine preserves the evidence; it does not settle the question.
 
+### T-23 — Delete leading segments
+**Actor:** host attacker. **Impact:** the oldest history disappears, and what remains still verifies.
+**Mitigation:** RF-14, RS-20, ADR-0012: a legitimate prune happens only at a checkpoint the anchor holds, and the CLI's `prune` refuses any other. SPEC §7 step 7 makes a log that starts above leaf 0 need a trusted checkpoint at or above its first segment.
+**Residual:** **partial.** A verifier cannot tell a prune from a deletion. Every segment boundary carries a stored checkpoint (ADR-0019), and the anchor holds them too, so deleting leading segments down to any boundary leaves a log that verifies `OK()` from the checkpoint there (ADR-0016). Requiring a checkpoint at exactly the boundary would not help, since one is always there. The evidence that a prune was authorised lives outside the log: the anchor must hold the checkpoint, and the operator keeps a record of each prune.
+
 ## 5. Coverage matrix
 
 | Threat | Requirements |
@@ -200,6 +205,7 @@ cannot inspect any of this.
 | T-20 | RF-11, RF-12, RS-14, RS-18 |
 | T-21 | RS-17 |
 | T-22 | RF-20, RF-09 |
+| T-23 | RF-14, RS-20 |
 
 Every `RS-` id appears above. RS-08 and RS-09 are hardening: RS-08 keeps a secret comparison
 from leaking, and RS-09 prevents an accident rather than an attack.
@@ -224,6 +230,8 @@ Stated plainly, since these are what someone would assume otherwise:
   operational; no library provides it.
 - **A deployment that ignores RS-17.** It will run, and report "intact", and mean much less.
 - **Split view in v0.1** (T-09).
+- **Deleting the oldest history down to a segment boundary** (T-23). It looks exactly like a prune;
+  only the anchor and the operator's records tell them apart.
 - **Real time.** No proof a checkpoint existed at the moment it claims (T-14).
 - **Availability.** Failing closed turns an audit failure into an outage, on purpose, for
   privilege-granting actions.

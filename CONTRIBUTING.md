@@ -78,7 +78,7 @@ Refs RS-02, ADR-0003
 Closes #11
 ```
 
-- **Scopes**: `tally wire note fsx filestore seal anchor tallytest cli interop ecosystem
+- **Scopes**: `tally wire note fsx filestore seal anchor attack tallytest cli interop ecosystem
   usher crier adr docs deps ci release`. A package without a scope here gets one in
   the same pull request that creates it.
 - **`!`** marks an incompatible API change. In v0.x it is allowed but never

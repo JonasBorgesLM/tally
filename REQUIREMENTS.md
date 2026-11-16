@@ -538,7 +538,7 @@ Issues are on the [project board](https://github.com/users/JonasBorgesLM/project
 | M4 filestore | Segments, `flock`, directory fsync, recovery, `Prune` | Fault injection at every offset; fsync error poisons |
 | M5 Anchor and CLI | Publish queue, `anchor.Dir`, CLI | T-17, T-21 green; exit codes stable |
 | M6 seal | `FileVault`, sealing, shred, incarnations | §12 item 9 green; T-19, T-20 green |
-| M7 Attack suite | Attack suite, fuzz campaigns, benchmarks, RUNBOOK, README table | T-01 to T-22 in CI; RNF-03 measured |
+| M7 Attack suite | Attack suite, fuzz campaigns, benchmarks, RUNBOOK, README table | T-01 to T-23 in CI; RNF-03 measured |
 | M8 Integration | usher ADR, port, adapter; crier mirror; sapper and warden scenarios | Runnable end-to-end example |
 | M9 Audit | Clean-session audit | Findings fixed or accepted with a reason |
 | M10 v0.1.0 | Release through §13's checklist | Signed tag; verifiable binaries |
