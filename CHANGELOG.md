@@ -10,6 +10,12 @@ The release workflow will refuse to publish a tag with no section here.
 
 ### Added
 
+- Benchmarks for RNF-03 (`filestore/bench_test.go`): durable append by number of callers, reopening after a crash, and
+  verifying a stored log, with the results recorded in `docs/BENCHMARKS.md` beside the hardware and Go version. CI
+  compares base and head on every pull request in the job summary, without gating on the numbers. RNF-03 is amended:
+  the batched-append and verify targets are met; `Append`'s p99 is stated as what it is made of, since one fsync on
+  macOS already exceeds the provisional 5 ms.
+
 - Fuzz targets for the checkpoint parser (`FuzzCheckpoint`, `FuzzCheckpointBody`) and the segment frame (`FuzzFrame`),
   beside the record decoder's, and a nightly workflow that fuzzes every target found, 30 minutes each, preserving
   any failing input as an artifact. The first run found a checkpoint `recorded_at` outside the range of int64

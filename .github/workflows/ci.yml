@@ -39,6 +39,8 @@ env:
   GOSEC_VERSION: "v2.28.0"
   GOVULNCHECK_VERSION: "v1.7.0"
   ACTIONLINT_VERSION: "v1.7.12"
+  # golang.org/x/perf has no tagged releases: an exact pseudo-version, as below.
+  BENCHSTAT_VERSION: "v0.0.0-20261009192801-be2c69fb417e"
   # golang.org/x/exp has no tagged releases; this is an exact pseudo-version,
   # the same pin bastion's release uses. Bump on a stated trigger, never on a
   # schedule.
@@ -208,6 +210,53 @@ jobs:
             done
           done
           [ "$found" -eq 1 ] || echo "no fuzz targets yet"
+
+  # ---------------------------------------------------------- benchmarks ----
+  #
+  # RNF-03's measurements, compared between the pull request's base and its
+  # head (#49). Reported in the job summary, never a gate on the numbers:
+  # GitHub-hosted runners are shared VMs whose fsync latency moves by tens of
+  # percent between runs, so a threshold here would fail on noise or be set
+  # loose enough to catch nothing. The job fails only when a benchmark itself
+  # fails, which is a broken invariant (Verify reporting a violation, a torn
+  # tail not quarantined), not a slow run. Rounds alternate base and head, so
+  # a runner that slows down mid-job slows both.
+  bench:
+    name: benchmarks
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: go.mod
+      - name: benchmark base and head, alternating
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -o pipefail
+          go install golang.org/x/perf/cmd/benchstat@${{ env.BENCHSTAT_VERSION }}
+          git worktree add --detach "$RUNNER_TEMP/base" "$BASE_SHA"
+          for round in 1 2 3 4 5 6; do
+            echo "::group::round $round"
+            go test ./... -run '^$' -bench . -count 1 | tee -a "$RUNNER_TEMP/head.txt"
+            # The base may predate a benchmark, or have none: report, do not fail.
+            (cd "$RUNNER_TEMP/base" && go test ./... -run '^$' -bench . -count 1) >> "$RUNNER_TEMP/base.txt" 2>&1 ||
+              echo "::warning::the base's benchmarks failed in round $round; the comparison covers the head only"
+            echo "::endgroup::"
+          done
+          {
+            echo "## Benchmarks: base \`${BASE_SHA:0:12}\` vs head"
+            echo
+            echo "A shared runner: differences within the noise benchstat reports are not changes. Recorded measurements are in docs/BENCHMARKS.md."
+            echo
+            echo '```'
+            benchstat base="$RUNNER_TEMP/base.txt" head="$RUNNER_TEMP/head.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # --------------------------------------------------------------- lint ----
   lint:
@@ -504,6 +553,7 @@ jobs:
       - cross-build
       - boundaries
       - fuzz
+      - bench
       - lint
       - govulncheck
       - docs
