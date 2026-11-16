@@ -1,8 +1,8 @@
 # tally runbook
 
 Operating procedures, each written once it could be exercised rather than guessed, and each saying
-what it was executed against. **This is a draft:** only key rotation is here. Host compromise, disk
-full, a poisoned log, shredding and vault backups, and prune come with #50.
+what it was executed against. **This is a draft:** key rotation, and a draft of disk full (#37), are here. Host compromise, a
+poisoned log, shredding and vault backups, and prune come with #50.
 
 ## Key rotation
 
@@ -55,3 +55,47 @@ It then verifies that:
 - without the new key, the checkpoints after the rotation are `UnknownKey`.
 
 Steps 1 and 2 are outside the library and were not exercised.
+
+## Disk full (draft, #37)
+
+**A full disk stops the log, on purpose.** Every write fails, the log is poisoned (ADR-0009), and
+every action that fails closed on `Append` stops with it (T-16). The library mitigates this and does
+not prevent it. Exercised against `filestore`'s tests (`space_test.go`, `fault_test.go`), not yet
+against a production volume; #50 finishes it.
+
+### Before it happens
+
+1. **Set a threshold.** `filestore.WithFreeSpaceThreshold(n)` makes the Log call
+   `Observer.DiskSpace(free)` after every batch and every checkpoint while free space is below `n`.
+   Choose `n` as your write rate times the time it takes someone to react, plus one segment. The
+   warning is worth something only if it arrives while there is still room.
+2. **Alert on `DiskSpace`.** The Observer is the only signal before writes fail, and it repeats on
+   every write while space is low. Deduplicate it in the alert, not by ignoring it.
+3. **On Linux, consider `filestore.WithPreallocation()`.** It reserves each new segment's blocks up to
+   the segment size, so another process filling the disk does not stop the log before the segment
+   is full. It is unavailable on macOS. A failed preallocation is reported as low space; it does not
+   stop the log.
+4. **Keep the log on its own volume** where you can. Nothing else then competes for its space.
+
+### When `DiskSpace` fires
+
+Free space: grow the volume, or move other data off it. **Do not delete segments by hand**: that
+breaks verification from genesis, and an auditor cannot tell it from tampering (R-10). Old segments
+go only through `Store.Prune`, below a checkpoint that verifies and that the anchor holds (ADR-0012).
+Never delete quarantine files (`quarantine-*.bin`) to make room: they are evidence (RF-20).
+
+### When writes have failed
+
+`Append` returns `ErrPoisoned`, and the Observer has had `Poisoned`. Then:
+
+1. **Close the Log.** No retry happens inside it, and none should happen outside it either.
+2. **Free space**, as above.
+3. **Reopen.** `filestore.Open` recovers a torn tail: the bytes after the last complete frame go to a
+   quarantine file, and `Observer.Recovered` reports how many. A recovery that would cut below the
+   last stored checkpoint refuses to open instead; stop and investigate, because a full disk does not
+   produce that.
+4. **Verify** the log, with the anchor, before relying on it again.
+
+A disk-full failure is a failed write, which loses nothing acknowledged: no receipt was returned for
+the entry that did not fit. If the failure was an fsync error rather than `ENOSPC`, R-31 applies:
+treat the most recent entries as suspect.

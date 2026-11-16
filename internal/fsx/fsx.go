@@ -45,6 +45,13 @@ type FS interface {
 	ReadDir(name string) ([]fs.DirEntry, error)
 	Stat(name string) (fs.FileInfo, error)
 
+	// FreeSpace returns the bytes available on the filesystem holding dir.
+	FreeSpace(dir string) (uint64, error)
+	// Preallocate reserves size bytes for name without changing its length.
+	// It fails with errors.ErrUnsupported where PreallocationSupported is
+	// false.
+	Preallocate(name string, size int64) error
+
 	// Lock takes an exclusive, non-blocking lock on name, creating it with
 	// mode 0600 if it does not exist. If the lock is held it returns an error
 	// matching ErrLocked. Closing the returned Closer releases the lock.

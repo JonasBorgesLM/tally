@@ -62,9 +62,11 @@ const (
 var ErrLoosePermissions = errors.New("filestore: directory permissions are looser than 0700")
 
 type config struct {
-	segmentSize int64
-	loose       bool
-	fsys        fsx.FS
+	segmentSize   int64
+	loose         bool
+	freeThreshold uint64
+	prealloc      bool
+	fsys          fsx.FS
 }
 
 // Option configures Open.
@@ -85,6 +87,35 @@ func WithLoosePermissions() Option {
 	return func(c *config) { c.loose = true }
 }
 
+// WithFreeSpaceThreshold makes the Store report low space when the free bytes
+// on its filesystem fall below n (RNF-10). tally.Open notices, through
+// tally.SpaceReporter, and calls Observer.DiskSpace after every batch and
+// checkpoint while space is low, so the warning comes before writes fail. Zero,
+// the default, turns it off.
+//
+// It mitigates and does not prevent (T-16): a full disk still fails every
+// write, and poisons the log (ADR-0009).
+func WithFreeSpaceThreshold(n uint64) Option {
+	return func(c *config) { c.freeThreshold = n }
+}
+
+// WithPreallocation reserves each new segment's blocks up to the segment size
+// when it is created, without changing its length, so that space taken by
+// other processes later does not stop the log before the segment is full
+// (RNF-10). It is Linux only: Open fails with ErrPreallocationUnsupported on
+// macOS.
+//
+// A preallocation that fails, for lack of space or because the filesystem does
+// not support it, is not a write error: the segment works without it, and the
+// next LowSpace reports low space whatever the threshold.
+func WithPreallocation() Option {
+	return func(c *config) { c.prealloc = true }
+}
+
+// ErrPreallocationUnsupported is returned by Open with WithPreallocation on a
+// platform where preallocation would need unsafe (macOS).
+var ErrPreallocationUnsupported = errors.New("filestore: preallocation is not supported on this platform")
+
 // Store is a tally.Store over one directory. tally.Log calls its write
 // methods from one goroutine; Records and Checkpoints are safe to call
 // concurrently with them, and read a snapshot of what was durable when the
@@ -101,6 +132,10 @@ type Store struct {
 
 	recovered int64 // bytes quarantined by Open (RF-20)
 
+	freeThreshold  uint64
+	prealloc       bool
+	preallocFailed bool // reported, once, by the next LowSpace
+
 	logID   tally.LogID
 	segs    []uint64 // first_seq of each segment, ascending
 	seg     fsx.File // the last segment, open for appending; nil before genesis
@@ -114,6 +149,7 @@ type Store struct {
 var (
 	_ tally.Store            = (*Store)(nil)
 	_ tally.RecoveryReporter = (*Store)(nil)
+	_ tally.SpaceReporter    = (*Store)(nil)
 )
 
 // Open opens the log in dir, creating dir with mode 0700 if it does not exist.
@@ -137,6 +173,9 @@ func Open(ctx context.Context, dir string, opts ...Option) (*Store, error) {
 	if cfg.segmentSize < 1 {
 		return nil, fmt.Errorf("filestore: segment size %d is not positive", cfg.segmentSize)
 	}
+	if cfg.prealloc && !fsx.PreallocationSupported {
+		return nil, ErrPreallocationUnsupported
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -150,7 +189,8 @@ func Open(ctx context.Context, dir string, opts ...Option) (*Store, error) {
 		}
 		return nil, fmt.Errorf("filestore: locking %s: %w", dir, err)
 	}
-	s := &Store{fsys: cfg.fsys, dir: dir, segmentSize: cfg.segmentSize, lock: lock}
+	s := &Store{fsys: cfg.fsys, dir: dir, segmentSize: cfg.segmentSize, lock: lock,
+		freeThreshold: cfg.freeThreshold, prealloc: cfg.prealloc}
 	if err := s.load(); err != nil {
 		return nil, errors.Join(err, s.closeFiles())
 	}
@@ -347,7 +387,33 @@ func (s *Store) startSegment(first uint64, prev [32]byte) error {
 	}
 	s.seg, s.segSize = f, int64(len(hdr))
 	s.segs = append(s.segs, first)
+	if s.prealloc {
+		if err := s.fsys.Preallocate(filepath.Join(s.dir, segmentName(first)), s.segmentSize); err != nil {
+			s.preallocFailed = true
+		}
+	}
 	return nil
+}
+
+// LowSpace returns the free bytes on the Store's filesystem and whether they
+// are below WithFreeSpaceThreshold, or a preallocation failed since the last
+// call (RNF-10). It implements tally.SpaceReporter. With no threshold and no
+// failure it does not measure. A failure to measure reports not low: the
+// Observer is told about space it knows is low, never about space it cannot
+// read.
+func (s *Store) LowSpace() (free uint64, low bool) {
+	s.mu.Lock()
+	threshold, failed := s.freeThreshold, s.preallocFailed
+	s.preallocFailed = false
+	s.mu.Unlock()
+	if threshold == 0 && !failed {
+		return 0, false
+	}
+	free, err := s.fsys.FreeSpace(s.dir)
+	if err != nil {
+		return 0, false
+	}
+	return free, failed || free < threshold
 }
 
 // createFile creates name in the directory with O_EXCL and mode 0600, writes

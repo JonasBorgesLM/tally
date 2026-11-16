@@ -20,6 +20,11 @@ The release workflow will refuse to publish a tag with no section here.
   anything is removed, and never below the last stored checkpoint (RF-20). `tally.Open` reports the count
   through `Observer.Recovered` for any `Store` implementing the new `tally.RecoveryReporter`.
 - `tally.CheckpointSize`, which reads a stored checkpoint's size without verifying it.
+- `filestore.WithFreeSpaceThreshold`: below it, `tally.Open`'s Log calls `Observer.DiskSpace` after every batch and
+  checkpoint, through the new `tally.SpaceReporter`, so the warning comes before writes fail (RNF-10, T-16).
+  `filestore.WithPreallocation` reserves each new segment's blocks on Linux, and fails `Open` with
+  `ErrPreallocationUnsupported` on macOS, where it would need `unsafe`.
+- A draft RUNBOOK entry for a full disk.
 - `filestore.Store.Prune` removes the segments wholly below a checkpoint that verifies and agrees with the
   log, after writing it to the prune marker `pruned.tlc` (SPEC §3.5, ADR-0012). It cannot tell whether the
   checkpoint was anchored (RS-20). `tally.Open` opens a pruned store, starting at its first record.

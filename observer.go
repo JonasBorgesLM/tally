@@ -63,3 +63,15 @@ func (l *Log) observe(f func(Observer)) {
 	}()
 	f(l.cfg.observer)
 }
+
+// checkSpace reports through the Observer when the Store says its free space
+// is below its threshold (RNF-10). Only the writer calls it.
+func (l *Log) checkSpace() {
+	r, ok := l.store.(SpaceReporter)
+	if !ok || l.cfg.observer == nil {
+		return
+	}
+	if free, low := r.LowSpace(); low {
+		l.observe(func(o Observer) { o.DiskSpace(free) })
+	}
+}
