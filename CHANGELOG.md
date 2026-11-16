@@ -10,6 +10,11 @@ The release workflow will refuse to publish a tag with no section here.
 
 ### Added
 
+- `seal.Vault`, `FileVault.Seal` and `Open`, and `seal.Payload`: AES-256-GCM under a subject's DEK, a random 96-bit
+  nonce, and SPEC §4's length-prefixed AAD binding `log_id`, `event_id` and `subject_ref` (RS-12, RS-19). A shredded
+  ref is `tally.ErrShredded`; any other mismatch is `seal.ErrOpen`. `seal.AAD` rebuilds the AAD to open a stored
+  payload. The sealing vector `testdata/vectors/seal.json`.
+
 - `seal.FileVault` (ADR-0020, SPEC §4.1): `Resolve` maps an identifier to a random 128-bit `SubjectRef` and a
   per-subject DEK, indexed by an HMAC under a vault key, the identifier stored nowhere; `RotateKEK` rewraps every
   DEK under a new KEK, resumably. `seal.KEK` is an interface, for a KMS; `seal.NewLocalKEK` is AES-256-GCM in

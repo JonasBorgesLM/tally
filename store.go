@@ -18,6 +18,12 @@ var ErrClosed = errors.New("tally: closed")
 // so that a caller can test for it without importing filestore.
 var ErrLocked = errors.New("tally: log locked by another writer")
 
+// ErrShredded is returned by seal when a subject's key has been destroyed:
+// what was sealed under it no longer opens, and nothing new is sealed under
+// it (RF-12). The entries still verify; only their payloads are gone. It is
+// declared here so that a caller can test for it without importing seal.
+var ErrShredded = errors.New("tally: the subject's key was shredded")
+
 // Size ceilings of SPEC §6, which a Store reading untrusted bytes checks a
 // length prefix against before it allocates (RS-05).
 const (
