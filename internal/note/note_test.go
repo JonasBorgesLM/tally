@@ -344,8 +344,8 @@ func TestASignerNeverPrintsItsKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	leaks := [][]byte{
-		[]byte(skey[strings.LastIndexByte(skey, '+')+1:]), // the base64 seed
-		[]byte("171 171 171 171"),                         // the seed as fmt prints a byte slice
+		[]byte(strings.SplitN(skey, "+", 5)[4]), // the base64 seed, which may itself hold '+'
+		[]byte("171 171 171 171"),               // the seed as fmt prints a byte slice
 		[]byte("abababab"), []byte("ABABABAB"), []byte("171"),
 	}
 	values := map[string]any{
