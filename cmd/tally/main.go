@@ -5,10 +5,13 @@
 //	tally head       --dir DIR
 //	tally checkpoint --dir DIR --key VKEY
 //	tally keygen     --name ORIGIN --out PREFIX
+//	tally prune      --dir DIR --key VKEY --anchor DIR --checkpoint FILE
 //
 // verify, head and checkpoint only read: none takes the log's lock or
 // recovers its tail, so they run beside the application and never alter the
-// evidence (#93). keygen writes new key files and never overwrites one.
+// evidence (#93). keygen writes new key files and never overwrites one. prune
+// is the one command that changes a log, and only below a checkpoint the
+// anchor holds (RS-20).
 //
 // The exit status is a contract (REQUIREMENTS §5.1): 0 the log is intact, 1 a
 // violation was found, 2 a usage or IO error, which says nothing about the
@@ -51,6 +54,7 @@ const usage = `usage:
   tally head       --dir DIR
   tally checkpoint --dir DIR --key VKEY [--key-file FILE]
   tally keygen     --name ORIGIN --out PREFIX
+  tally prune      --dir DIR --key VKEY --anchor DIR --checkpoint FILE
 
 exit status: 0 intact, 1 violation, 2 usage or IO error
 `
@@ -70,6 +74,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return cmdCheckpoint(ctx, args[1:], stdout, stderr)
 	case "keygen":
 		return cmdKeygen(args[1:], stdout, stderr)
+	case "prune":
+		return cmdPrune(ctx, args[1:], stdout, stderr)
 	case "-h", "--help", "help":
 		o := &output{w: stdout}
 		o.printf("%s", usage)
