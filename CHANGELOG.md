@@ -38,6 +38,8 @@ The release workflow will refuse to publish a tag with no section here.
   `--require-fully-attested`, `--from` and `--heartbeat`. Every log-derived value printed is escaped, so control
   characters, ANSI sequences and newlines cannot reach the terminal or forge a line (RS-13, T-17).
 - `tally.VerifyCheckpoint`, SPEC §5.4 applied to one checkpoint.
+- `tally keygen`: a signing key in SPEC §5.3's encodings, the private key at 0600 and printed nowhere, never
+  overwriting an existing key.
 - `anchor.Dir`, a create-only spool of checkpoints: each one is written once under a name derived from its bytes,
   linked into place so an existing file is never overwritten, and a republished identical checkpoint is success
   (RS-10, RS-17). It is the host's half of an anchor; the README gives recipes for the other half, and says

@@ -4,9 +4,11 @@
 //	tally verify     --dir DIR --key VKEY [--anchor DIR] [--require-fully-attested] ...
 //	tally head       --dir DIR
 //	tally checkpoint --dir DIR --key VKEY
+//	tally keygen     --name ORIGIN --out PREFIX
 //
-// Every command only reads: none takes the log's lock or recovers its tail,
-// so they run beside the application and never alter the evidence (#93).
+// verify, head and checkpoint only read: none takes the log's lock or
+// recovers its tail, so they run beside the application and never alter the
+// evidence (#93). keygen writes new key files and never overwrites one.
 //
 // The exit status is a contract (REQUIREMENTS §5.1): 0 the log is intact, 1 a
 // violation was found, 2 a usage or IO error, which says nothing about the
@@ -48,6 +50,7 @@ const usage = `usage:
                    [--heartbeat DURATION --tolerance DURATION]
   tally head       --dir DIR
   tally checkpoint --dir DIR --key VKEY [--key-file FILE]
+  tally keygen     --name ORIGIN --out PREFIX
 
 exit status: 0 intact, 1 violation, 2 usage or IO error
 `
@@ -65,6 +68,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return cmdHead(ctx, args[1:], stdout, stderr)
 	case "checkpoint":
 		return cmdCheckpoint(ctx, args[1:], stdout, stderr)
+	case "keygen":
+		return cmdKeygen(args[1:], stdout, stderr)
 	case "-h", "--help", "help":
 		o := &output{w: stdout}
 		o.printf("%s", usage)

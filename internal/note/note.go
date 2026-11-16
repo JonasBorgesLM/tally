@@ -142,11 +142,25 @@ func parseKeyParts(name, idHex, key64 string) (keyName string, id uint32, key []
 	return name, uint32(id64), raw[1:], nil
 }
 
-// Signer holds a private key. Its error messages never include the key.
+// Signer holds a private key. Its error messages never include the key, and
+// no fmt verb prints it, on a *Signer, a Signer, or a struct holding one,
+// exported or not (RS-07).
 type Signer struct {
 	name string
 	id   uint32
-	priv ed25519.PrivateKey
+	// sign closes over the private key, which is held nowhere else. fmt
+	// prints a func as an address under every verb and at every depth, so
+	// no way of printing a Signer, or a struct holding one in any field,
+	// reaches the key. A byte slice, even behind a pointer or a type with
+	// a Format method, was reachable (by %d, a bad verb, or an unexported
+	// field), which is what this rules out.
+	sign func(msg []byte) []byte
+}
+
+// Format implements fmt.Formatter for every verb, %d and %x included, with the
+// key's name and id only.
+func (s Signer) Format(f fmt.State, _ rune) {
+	_, _ = io.WriteString(f, s.String()) //nolint:errcheck // Format has no error to return; a failed write prints less, never the key
 }
 
 // Name is the key's name.
@@ -156,13 +170,16 @@ func (s *Signer) Name() string { return s.name }
 func (s *Signer) KeyHash() uint32 { return s.id }
 
 // Sign returns the Ed25519 signature of msg.
-func (s *Signer) Sign(msg []byte) ([]byte, error) { return ed25519.Sign(s.priv, msg), nil }
+func (s *Signer) Sign(msg []byte) ([]byte, error) {
+	return s.sign(msg), nil
+}
 
-// String keeps the private key out of %v and %+v (RS-07).
-func (s *Signer) String() string { return fmt.Sprintf("note.Signer(%s+%08x)", s.name, s.id) }
+// String keeps the private key out of %v and %+v (RS-07). It has a value
+// receiver, so a Signer prints the same as a *Signer.
+func (s Signer) String() string { return fmt.Sprintf("note.Signer(%s+%08x)", s.name, s.id) }
 
 // GoString keeps the private key out of %#v (RS-07).
-func (s *Signer) GoString() string { return s.String() }
+func (s Signer) GoString() string { return s.String() }
 
 // NewSigner parses a signer key,
 // `PRIVATE+KEY+<name>+<key_id hex>+<base64(0x01 || 32-byte seed)>` (SPEC §5.3).
@@ -183,7 +200,7 @@ func NewSigner(skey string) (*Signer, error) {
 	if keyID(name, publicKey(priv)) != id {
 		return nil, fmt.Errorf("%w: the key id does not match the key", ErrMalformed)
 	}
-	return &Signer{name: name, id: id, priv: priv}, nil
+	return &Signer{name: name, id: id, sign: func(msg []byte) []byte { return ed25519.Sign(priv, msg) }}, nil
 }
 
 // publicKey is the public half of priv. An Ed25519 private key is its seed
