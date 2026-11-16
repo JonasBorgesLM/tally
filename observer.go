@@ -5,9 +5,11 @@ import "time"
 // Observer receives the log's health signals (RF-16), for metrics and alerts,
 // with no dependency on any metrics library.
 //
-// Its methods are called from the writer goroutine, the one that orders and
-// stores every entry (ADR-0008). They must not block: a slow Observer stalls
-// every Append. Hand the value to a channel or an atomic counter and return.
+// Its methods are never called concurrently. They are called from the writer
+// goroutine, the one that orders and stores every entry (ADR-0008), except
+// AnchorPublish for a failed publication, which comes from that anchor's
+// goroutine (RF-07). They must not block: a slow Observer stalls every Append.
+// Hand the value to a channel or an atomic counter and return.
 //
 // No method receives a payload or any part of an entry, by the shape of its
 // types: every parameter is a count, a duration or an error, and the errors are
@@ -23,7 +25,8 @@ type Observer interface {
 	// store took to do it, fsync included.
 	Batch(n int, syncLatency time.Duration)
 	// AnchorPublish reports a failed publication to an anchor, and how many
-	// checkpoints the bounded queue has dropped so far (RF-07, RF-19; #38).
+	// checkpoints that anchor's bounded queue has dropped so far (RF-07,
+	// RF-19). A drop is reported too, with ErrAnchorQueueFull.
 	AnchorPublish(err error, dropped uint64)
 	// DiskSpace reports free space below the configured threshold (RNF-10;
 	// #37).
@@ -56,6 +59,8 @@ func (l *Log) observe(f func(Observer)) {
 	if l.cfg.observer == nil {
 		return
 	}
+	l.observerMu.Lock()
+	defer l.observerMu.Unlock()
 	defer func() {
 		if recover() != nil {
 			l.observerPanics.Add(1)

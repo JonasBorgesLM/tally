@@ -28,6 +28,11 @@ The release workflow will refuse to publish a tag with no section here.
 - `tally.MalformedError`: a `Source` reports stored bytes that break the format, and `Verify` turns it into a
   `MalformedRecord` violation at the first leaf not verified instead of its error (RS-04). `filestore` reports
   every format fault of a segment or the checkpoints file this way.
+- `tally.WithAnchors`, `WithAnchorQueue` and `WithAnchorFlushTimeout`: every stored checkpoint is published to each
+  `Anchor` from its own goroutine and bounded queue, so publication never blocks `Append` (RF-07). A full queue
+  drops the oldest checkpoint but the newest, counts it, and reports `ErrAnchorQueueFull`; a failure is reported
+  and retried with backoff; `Close` flushes up to a deadline and returns `ErrAnchorUnflushed` for what is left
+  (RF-19). The `Observer` is never called concurrently, now that `AnchorPublish` can come from an anchor's goroutine.
 - `filestore.OpenReader`, a read-only `Source` that never takes the lock, recovers or writes, for verifying a
   directory as it is, damage included.
 - `filestore.Store.Prune` removes the segments wholly below a checkpoint that verifies and agrees with the

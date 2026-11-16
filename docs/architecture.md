@@ -92,6 +92,8 @@ func WithCheckpointEvery(n uint64, d time.Duration) Option
 func WithMaxBatch(n int) Option
 func WithMaxDelay(d time.Duration) Option
 func WithAnchors(a ...Anchor) Option
+func WithAnchorQueue(n int) Option                    // RF-19: bounded; drops the oldest but the newest
+func WithAnchorFlushTimeout(d time.Duration) Option // RF-19: Close is bounded when an anchor hangs
 func WithClock(c Clock) Option
 func WithObserver(o Observer) Option
 func WithIdempotencyWindow(n int) Option
@@ -150,7 +152,9 @@ type Clock interface {
     After(d time.Duration) <-chan time.Time // the heartbeat timer; FixedClock fires it on Advance
 }
 
-// Observer methods are called from the writer goroutine and must not block.
+// Observer methods are never called concurrently, and must not block. They come
+// from the writer goroutine, except AnchorPublish for a failed publication,
+// which comes from that anchor's goroutine.
 // None receives a payload (RF-16).
 type Observer interface {
     Batch(n int, syncLatency time.Duration)
