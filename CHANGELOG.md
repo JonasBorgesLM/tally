@@ -10,6 +10,8 @@ The release workflow will refuse to publish a tag with no section here.
 
 ### Added
 
+- README, "Mirroring to crier", and `Example_mirrorToCrier`: mirror only what `Append` confirmed, with no
+  payload, and a lost mirror event loses no audit record (RI-03).
 - `tally.NewSigner`, which loads the signer key `tally keygen` writes, so a consumer needs no `golang.org/x/mod`
   to sign a log. The key is held only in a closure and printed by no error or format verb (RS-07).
 - The RUNBOOK, complete: monitoring off the host, host compromise, a poisoned log, disk full, prune, shredding a

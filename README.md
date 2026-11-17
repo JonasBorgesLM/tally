@@ -46,7 +46,8 @@ An auditor, off the host, with a copy of the log and of the anchor:
 tally verify --dir audit-copy --key "$(cat audit.pub)" --anchor anchor-copy   # 0 intact, 1 violated, 2 could not verify
 ```
 
-Running it, including what to monitor from off the host, is in the [RUNBOOK](docs/RUNBOOK.md).
+Running it, including what to monitor from off the host, is in the [RUNBOOK](docs/RUNBOOK.md). Mirroring the
+confirmed events to a dashboard is [below](#mirroring-to-crier).
 
 ## The guarantee, stated honestly
 
@@ -121,6 +122,23 @@ In each recipe, the auditor verifies against the copy off the host, with `tally.
 opened on it. Read on the host, a spool says only what the host chose to leave there. The pull or upload
 interval adds to the window in which the newest entries are unprotected. Watching for a host that went
 silent also happens there, never on the host: [RUNBOOK, "Monitoring off the host"](docs/RUNBOOK.md#monitoring-off-the-host).
+
+## Mirroring to crier
+
+**crier is not the audit record; tally is** (RI-03). crier is the ecosystem's observability pipeline, and its
+buffer drops under load (`crier/IR3`), which is right for dashboards and wrong for evidence. An application that
+wants its audit events on a dashboard mirrors them, in its own wiring, under three rules:
+
+- **Only after `Append` returns a `Receipt`.** Mirrored before, or after a failed `Append`, a dashboard shows what
+  the audit log does not hold.
+- **No payload.** A sealed payload is what a shred erases (RF-12), and a copy in crier is one no shred reaches.
+  Mirror the fields a dashboard needs and the receipt's `seq`, which finds the entry in the log.
+- **Ignore the mirror's failures.** The record was durable before the mirror was called, so **losing a crier event
+  loses no audit record**, only a point on a dashboard.
+
+`Example_mirrorToCrier` in [`example_mirror_test.go`](example_mirror_test.go) does exactly this, and runs with the
+tests. tally imports no crier package (RI-01): the `Mirror` interface there stands for whatever the application
+already uses.
 
 ## Personal data and crypto-shredding
 
