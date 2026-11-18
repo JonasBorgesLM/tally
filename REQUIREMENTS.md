@@ -474,9 +474,11 @@ dashboards and alerts.
 
 - **RI-04** bastion wraps `Anchor.Publish` to a remote destination, in the application,
   and **never** `Append`: a poisoned log is not fixed by retrying.
-- **RI-05** warden tampers with a lab service's log and checks the `verify` report; sapper
-  measures `Append` latency under load through usher and asserts the p99 SLO. Authorised
-  targets only.
+- **RI-05** A lab service's log is tampered with and `tally verify`'s exit status is checked;
+  sapper loads usher's `/token`, where every issuance is a durable `Append`, and asserts a p99
+  SLO. Both run in usher's "Audit log" workflow (`usher/ADR-0023`). The tampering is a script
+  there (`check-audit-tamper.sh`), not warden as first planned: warden tests over HTTP only and
+  cannot reach a log file (#54). Authorised targets only.
 - **RI-06** task-api is a secondary consumer (task changes and administrative actions).
   moat has no dependency either way. beacon and granary have no relation in the MVP.
 
@@ -539,7 +541,7 @@ Issues are on the [project board](https://github.com/users/JonasBorgesLM/project
 | M5 Anchor and CLI | Publish queue, `anchor.Dir`, CLI | T-17, T-21 green; exit codes stable |
 | M6 seal | `FileVault`, sealing, shred, incarnations | §12 item 9 green; T-19, T-20 green |
 | M7 Attack suite | Attack suite, fuzz campaigns, benchmarks, RUNBOOK, README table | T-01 to T-23 in CI; RNF-03 measured |
-| M8 Integration | usher ADR, port, adapter; crier mirror; sapper and warden scenarios | Runnable end-to-end example |
+| M8 Integration | usher ADR, port, adapter; crier mirror; sapper scenario and a tampering check | Runnable end-to-end example |
 | M9 Audit | Clean-session audit | Findings fixed or accepted with a reason |
 | M10 v0.1.0 | Release through §13's checklist | Signed tag; verifiable binaries |
 | M11 v0.2 | Merkle tree, tlog-checkpoint, proofs, witness | Consistency verified; T-09 addressed |
