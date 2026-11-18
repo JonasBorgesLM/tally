@@ -38,6 +38,28 @@ func (o *output) status(code int) int {
 	return code
 }
 
+// maxKeyFile bounds --key-file (RS-05, audit A-08): a verifier key is under
+// 200 bytes, so this is thousands of them, and a mistaken path to a large file
+// fails rather than fills memory.
+const maxKeyFile = 1 << 20
+
+// readBounded reads path, refusing one over limit bytes before reading more.
+func readBounded(path string, limit int64) ([]byte, error) {
+	f, err := os.Open(path) // #nosec G304 -- a path the operator chose
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close() //nolint:errcheck // read-only: a close error loses no data
+	b, err := io.ReadAll(io.LimitReader(f, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(b)) > limit {
+		return nil, fmt.Errorf("%s is over %d bytes", path, limit)
+	}
+	return b, nil
+}
+
 // keyList is a repeatable --key flag.
 type keyList []string
 
@@ -57,7 +79,7 @@ func keyFlags(fs *flag.FlagSet) func() (tally.Verifiers, error) {
 	return func() (tally.Verifiers, error) {
 		all := append([]string(nil), keys...)
 		if *file != "" {
-			b, err := os.ReadFile(*file)
+			b, err := readBounded(*file, maxKeyFile)
 			if err != nil {
 				return tally.Verifiers{}, err
 			}
@@ -151,7 +173,7 @@ func cmdVerify(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		opts = append(opts, tally.WithRequireFullyAttested())
 	}
 	if *from != "" {
-		cp, rerr := os.ReadFile(*from)
+		cp, rerr := readCheckpointFile(*from)
 		if rerr != nil {
 			return fail(stderr, rerr)
 		}

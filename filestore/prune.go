@@ -19,8 +19,11 @@ const pruneMarkerName = "pruned.tlc"
 var ErrPruneRefused = errors.New("filestore: prune refused")
 
 // Prune removes the leading segments whose every record is below cp's size,
-// and returns how many it removed (RF-14, ADR-0012). The segment holding
-// record size-1 is kept, so the log still starts at or below the checkpoint.
+// and returns how many it removed (RF-14, ADR-0012). The log still starts at
+// or below the checkpoint's size: when that size is a segment boundary, the
+// segment holding record size-1 goes too, and the next segment's header,
+// whose prev_hash is the checkpoint's head, is what a verifier matches it
+// against (SPEC §7 step 5). The last segment is never removed.
 //
 // cp must verify under keys and agree with the stored log: Prune runs Verify
 // from cp (RF-08) and refuses unless the report is OK. A checkpoint whose

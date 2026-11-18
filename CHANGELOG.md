@@ -116,6 +116,17 @@ The release workflow will refuse to publish a tag with no section here.
 
 ### Fixed
 
+- The clean-session audit's low findings (#128):
+  - A segment header that names another log_id, or a prev_hash its first record does not chain to, is now
+    malformed, where it verified (A-03).
+  - A log with no record at or after a checkpoint is `TruncatedBelowCheckpoint`, and a genesis that is itself a
+    violation is the result with `Size` 0, as SPEC §7 says, where both were errors (A-04).
+  - An anchored checkpoint dated after `now` plus the tolerance is a `HeartbeatGap`, where it hid every gap (A-06).
+  - `tally verify` bounds `--from` by the checkpoint ceiling and `--key-file` by 1 MiB (A-08).
+  - Prune's docs, SPEC §3.5 and the RUNBOOK said the segment holding record `size - 1` is kept; at a segment
+    boundary it is not, and the next header is what a verifier matches. The docs now say so (A-05).
+  - A sealed payload's length is in clear and survives a shred: now stated in the README, T-20 and `Seal`'s
+    documentation, as an accepted residual (A-07).
 - One changed length field in a segment, run past the end of the file, was recovered as a torn write: every
   acknowledged entry after it was quarantined and dropped, and the log verified. A cut-off frame with a complete,
   CRC-valid frame after it is now a bad middle, and Open refuses (SPEC §3.3). Found by the clean-session audit (A-02,

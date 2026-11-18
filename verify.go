@@ -402,11 +402,29 @@ func Verify(ctx context.Context, src Source, keys Verifiers, opts ...VerifyOptio
 		}
 	}
 	if !read {
-		return nil, errors.New("tally: the source holds no record")
+		// No record at all is something to judge only against a checkpoint
+		// that says there should be: then it is a truncation below it, a
+		// violation like any other (RS-04, audit A-04, #128). With none, an
+		// empty source is more likely the wrong directory than a log.
+		var want uint64
+		for _, c := range cps {
+			want = max(want, c.size)
+		}
+		if want == 0 {
+			return nil, errors.New("tally: the source holds no record")
+		}
+		rep.Failures = append(rep.Failures, Failure{Kind: TruncatedBelowCheckpoint, Seq: from,
+			Note: fmt.Sprintf("no record at or after leaf %d, below a checkpoint covering %d leaves", from, want)})
+		return rep, nil
 	}
 	rep.Size = chain.size
 	if broke != nil {
 		rep.Failures = append(rep.Failures, Failure{Kind: broke.kind, Seq: broke.seq, Note: broke.err.Error()})
+	}
+	if broke != nil && f == 0 && chain.size == 0 {
+		// Genesis itself is a violation: the log has no verified identity,
+		// and steps 5 to 8 are skipped (SPEC §7 step 3, audit A-04).
+		return rep, nil
 	}
 
 	// Step 3: the log's origin, from genesis or, without it, the checkpoints.
@@ -541,6 +559,12 @@ func heartbeatGaps(cps []checkpoint, origin string, hb *heartbeat) []Failure {
 		c := &cps[i]
 		if !c.anchored || c.origin != origin {
 			continue
+		}
+		// A time after now cannot be judged against now, and would hide every
+		// gap behind it: report it rather than let it pass (audit A-06, #128).
+		if ahead := time.Unix(0, c.at).Sub(hb.now); ahead > hb.tolerance {
+			gaps = append(gaps, Failure{Kind: HeartbeatGap, Seq: c.size,
+				Note: fmt.Sprintf("an anchored checkpoint dated %v after now, over the tolerance of %v", ahead, hb.tolerance)})
 		}
 		if prev != nil && !prev.closed && time.Duration(c.at-prev.at) > limit {
 			gaps = append(gaps, Failure{Kind: HeartbeatGap, Seq: c.size,

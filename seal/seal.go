@@ -85,6 +85,10 @@ func Payload(ctx context.Context, v Vault, log tally.LogID, ev tally.EventID, re
 
 // Seal encrypts plaintext under ref's DEK with AES-256-GCM and a random 96-bit
 // nonce, bound to aad (RS-12). A ref whose DEK is gone is tally.ErrShredded.
+//
+// The ciphertext is exactly 29 bytes longer than plaintext, with no padding:
+// the plaintext's length is in clear, in the log, after any shred (T-20). A
+// caller to whom a length matters pads before sealing.
 func (v *FileVault) Seal(ctx context.Context, ref tally.SubjectRef, plaintext, aad []byte) ([]byte, error) {
 	dek, err := v.lockedDEK(ctx, ref)
 	if err != nil {

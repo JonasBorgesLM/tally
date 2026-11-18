@@ -243,7 +243,8 @@ to an auditor who reads the pruned log.
    tally prune --dir LOG --key-file trusted.keys --anchor /srv/anchor --checkpoint /srv/anchor/<file>.note
    ```
 
-   It keeps the segment holding the checkpoint's last entry, so the log still starts at or below it.
+   The log still starts at or below the checkpoint's size. At a segment boundary, the next segment's header
+   carries the checkpoint's head, which is what a verifier matches.
 4. **Verify against the anchor**, and reopen the Log. From now on every verifier needs a trusted checkpoint
    at or above the new first segment, or reports `PrunedWithoutTrustedCheckpoint` (SPEC §7 step 7).
 
