@@ -3,8 +3,8 @@
 One maintainer cuts releases. These are the steps that are easy to get backwards under pressure. The branch
 model is in [`CONTRIBUTING.md`](CONTRIBUTING.md#git-flow).
 
-**No release has been cut.** The release workflow exists (`.github/workflows/release.yml`, #57) and has not yet
-run on a tag: `v0.1.0-rc.1` (#58) is its first run. The steps below are vane's, which have been run.
+**v0.1.0 is the first release** cut through this file and the release workflow (`.github/workflows/release.yml`,
+#57), after `v0.1.0-rc.1` as the workflow's first run (#58).
 
 ## Before the first tag
 
@@ -14,7 +14,24 @@ The first public tag cannot be taken back, and moat learned that the hard way.
 - [ ] From a clean directory with no workspace, `go install` and `go get` resolve the tag.
 - [ ] The CHANGELOG comes from a real API diff, not from memory.
 - [ ] The clean-session audit (#56) is done, and findings are fixed or accepted with a reason.
-- [ ] A `retract` plan is written down: what would be retracted, and with which release.
+- [ ] A `retract` plan is written down: what would be retracted, and with which release. It is below.
+
+### The retract plan
+
+A bad release is never fixed by moving or deleting its tag: the proxy and every `go.sum` keep it. Instead:
+
+1. **A release candidate that fails** (`v0.1.0-rc.N`) is not retracted. Nothing resolves to a prerelease unless
+   someone asks for it by name, so the next `-rc.N+1` supersedes it, and the release notes of the failed one say
+   why.
+2. **A release that is bad** (`vX.Y.Z`: it does not build, it does not resolve, or `tally verify` says intact
+   when it should not) is retracted in the next patch release. That release's `go.mod` gains
+   `retract vX.Y.Z // <the reason, one line>`, its CHANGELOG says what was wrong, and its own tag goes through
+   this file like any other.
+3. **A security defect** gets the same retract and, before it, a GitHub security advisory (SECURITY.md).
+   `tally verify` from the bad release is listed by version in the advisory, since auditors may still hold it.
+
+`go list -m -versions github.com/JonasBorgesLM/tally` shows what remains selectable after a retract; check it
+from a clean directory, with no workspace, once the fix is published.
 
 ## Cutting a release
 
