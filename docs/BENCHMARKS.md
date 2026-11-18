@@ -43,15 +43,33 @@ not NVMe numbers**, and the VM's timers fire late (below).
 
 Batches achieved: 1 entry per fsync with one caller, 16 with 16, 255 with 256, on both.
 
-**Raspberry Pi: not measured.** No Pi was available; the command above is what to run on one, and the numbers
-come with #115.
+**Raspberry Pi** (#115), recorded 2026-11-18, ten runs, the same benchstat median: a Raspberry Pi 5 Model B,
+4 cores, 8 GB, booting from a 64 GB microSD card (`mmcblk0`, name `USD00`, manufacturer id `0x0000ad`,
+dated 08/2024, kernel write cache "write back"), ext4 mounted `noatime`, Debian 13 (trixie), kernel
+6.12.62+rpt-rpi-2712. The test binary was cross-compiled with Go 1.27.3 (`GOOS=linux GOARCH=arm64`) and run
+with `TMPDIR` on the card: Debian 13 mounts `/tmp` as tmpfs, and a benchmark there measures memory, not the
+card. Linux sends a cache flush with each fsync; whether this card holds the data through a power cut once
+it acknowledges was not tested.
+
+| Benchmark | Pi entries/s | Pi p99 |
+| --- | ---: | ---: |
+| `Append`, 1 caller, MaxDelay 0 | 375 ± 1% | 2.8 ms ± 7% |
+| `Append`, 1 caller, MaxDelay 2 ms | 214 ± 1% | 5.2 ms ± 6% |
+| `Append`, 16 callers, MaxDelay 2 ms | 3,212 ± 1% | 7.7 ms ± 0% |
+| `Append`, 256 callers, MaxDelay 2 ms | **43,970** ± 1% | 8.7 ms ± 4% |
+| `Reopen`, 100k entries | 284,800 ± 7% | |
+| `Verify`, 100k entries | **455,000** ± 16% | |
+
+Batches: 1 entry per fsync with one caller, 15.95 with 16, 255.1 with 256. One fsync on this card costs about
+2.7 ms (one caller, no delay), and the 2 ms `MaxDelay` added 2.0 ms (4.67 against 2.67 ms per `Append`): on
+real Linux the timer fires on time, so the VM's lateness below was the VM's.
 
 ## Against RNF-03
 
 | Target | Result |
 | --- | --- |
-| Batched append ≥ 10k entries/s | **Met** with 256 callers: 43.8k/s on macOS, 158k/s in the Linux VM. With few callers it is not reachable on any disk: 16 callers share each fsync 16 ways and no more |
-| Verify ≥ 100k entries/s per core | **Met**: 1.3M/s on macOS, 0.77M/s in the Linux VM |
+| Batched append ≥ 10k entries/s | **Met** with 256 callers: 43.8k/s on macOS, 158k/s in the Linux VM, 44.0k/s on the Pi's microSD card. With few callers it is not reachable on any disk: 16 callers share each fsync 16 ways and no more |
+| Verify ≥ 100k entries/s per core | **Met**: 1.3M/s on macOS, 0.77M/s in the Linux VM, 0.46M/s on the Pi |
 | `Append` p99 ≤ 5 ms with a 2 ms `MaxDelay` | **Not met as a fixed number**, and replaced by a structural statement (RNF-03) |
 
 ### Why the p99 is not a number tally can promise
@@ -64,6 +82,8 @@ checkpoint policy, and the measurements show each one dominating somewhere:
 
 - **The disk.** On macOS one `F_FULLFSYNC` averages 4 ms (`maxdelay=0`, one caller), and its p99 alone, 7 ms,
   is over 5 ms. No setting of tally reaches the target there.
+- **The card.** On the Pi, one caller without a delay has a p99 of 2.8 ms, under 5 ms; with the 2 ms
+  `MaxDelay` it is 5.2 ms, just over, and every extra caller adds a batch in flight to wait for.
 - **The timer.** In the Linux VM the 2 ms `MaxDelay` cost 3.8 ms on average (one caller: 4.2 ms with it,
   0.45 ms without), and the p99 with it stayed at 6.5 ms with automatic checkpoints turned off as well. A
   `MaxDelay` is a lower bound on the wait, not an upper one.
