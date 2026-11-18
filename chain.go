@@ -3,6 +3,8 @@ package tally
 import (
 	"errors"
 	"fmt"
+
+	"github.com/JonasBorgesLM/tally/internal/merkle"
 )
 
 // This file is the core of SPEC §7 step 4, and the head comparison of step 5,
@@ -95,6 +97,12 @@ type chainState struct {
 	origin   string
 	prevLeaf [32]byte
 	prevTime int64
+	// tree is the Merkle tree's compact range over the leaves accepted, or
+	// nil when the leaves below the start are unknown (#60): a pruned log
+	// without a stored range. pending is a stored range that starts above
+	// the first leaf read, adopted when the chain reaches it.
+	tree    *merkle.Range
+	pending *merkle.Range
 }
 
 // add checks body as the next leaf and, if it is valid, advances the state and
@@ -117,7 +125,13 @@ func (c *chainState) add(body []byte) (record, *violation) {
 		c.prevTime = r.recordedAt
 	}
 	c.prevLeaf = LeafHash(body)
+	if c.tree != nil {
+		c.tree.Append(c.prevLeaf)
+	}
 	c.size++
+	if c.tree == nil && c.pending != nil && c.pending.Size() == c.size {
+		c.tree, c.pending = c.pending, nil
+	}
 	return r, nil
 }
 

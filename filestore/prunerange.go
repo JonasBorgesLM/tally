@@ -18,6 +18,9 @@ import (
 	"github.com/JonasBorgesLM/tally/internal/merkle"
 )
 
+// A Log reopening a pruned Store keeps the Merkle root from its range (#60).
+var _ tally.CompactRanger = (*Store)(nil)
+
 // pruneRangeName holds the compact range of the pruned leaves (SPEC §3.6).
 const pruneRangeName = "pruned.range"
 
@@ -78,8 +81,9 @@ func decodePruneRange(data []byte) (start uint64, prefix [][32]byte, err error) 
 	return start, prefix, nil
 }
 
-// pruneRange reads the stored compact range: ok false when there is none.
-func (s *Store) pruneRange() (start uint64, prefix [][32]byte, ok bool, err error) {
+// CompactRange is tally.CompactRanger: the compact range the last prune
+// stored (SPEC §3.6), ok false when there is none.
+func (s *Store) CompactRange(_ context.Context) (start uint64, prefix [][32]byte, ok bool, err error) {
 	f, err := s.fsys.OpenFile(filepath.Join(s.dir, pruneRangeName), os.O_RDONLY, 0)
 	if errors.Is(err, fs.ErrNotExist) {
 		return 0, nil, false, nil
@@ -116,7 +120,7 @@ func (s *Store) treeUpTo(ctx context.Context, first, upTo uint64) (*merkle.Tree,
 	if first > 0 {
 		var ok bool
 		var err error
-		start, prefix, ok, err = s.pruneRange()
+		start, prefix, ok, err = s.CompactRange(ctx)
 		if err != nil {
 			return nil, err
 		}

@@ -12,6 +12,9 @@ The release workflow will refuse to publish a tag with no section here.
 
 - The RFC 6962 Merkle tree over the existing leaves, with inclusion and consistency proofs (#59, ADR-0002). A
   v0.1 log needs nothing rewritten. It is internal until checkpoints carry its root (#60).
+- `tally.CompactRanger`, an optional interface a `Source` implements when it kept the compact range of what it
+  pruned; `filestore.Store` does. A `Log` keeps the Merkle root of its leaves from it, or from leaf 0, so that
+  the v0.2 checkpoints can sign a root without rereading the log (#60). Reopening costs no measurable time more.
 - `filestore.Prune` writes `pruned.range`, the compact range below the first record it keeps, before removing
   anything (SPEC §3.6, ADR-0012's amendment). Proofs still reach the records kept, and from every size at or
   above the prune. A log pruned by v0.1 is pruned further without one.
