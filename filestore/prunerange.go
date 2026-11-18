@@ -15,6 +15,7 @@ import (
 	"strconv"
 
 	"github.com/JonasBorgesLM/tally"
+	"github.com/JonasBorgesLM/tally/internal/fsx"
 	"github.com/JonasBorgesLM/tally/internal/merkle"
 )
 
@@ -84,7 +85,21 @@ func decodePruneRange(data []byte) (start uint64, prefix [][32]byte, err error) 
 // CompactRange is tally.CompactRanger: the compact range the last prune
 // stored (SPEC §3.6), ok false when there is none.
 func (s *Store) CompactRange(_ context.Context) (start uint64, prefix [][32]byte, ok bool, err error) {
-	f, err := s.fsys.OpenFile(filepath.Join(s.dir, pruneRangeName), os.O_RDONLY, 0)
+	return readPruneRange(s.fsys, s.dir)
+}
+
+// CompactRange is tally.CompactRanger for a verifier: the range the last
+// prune stored, which Verify uses only to compare roots that a trusted
+// checkpoint signs (SPEC §3.6).
+func (r *Reader) CompactRange(_ context.Context) (start uint64, prefix [][32]byte, ok bool, err error) {
+	return readPruneRange(r.fsys, r.dir)
+}
+
+var _ tally.CompactRanger = (*Reader)(nil)
+
+// readPruneRange reads dir's pruned range, bounded before reading (RS-05).
+func readPruneRange(fsys fsx.FS, dir string) (start uint64, prefix [][32]byte, ok bool, err error) {
+	f, err := fsys.OpenFile(filepath.Join(dir, pruneRangeName), os.O_RDONLY, 0)
 	if errors.Is(err, fs.ErrNotExist) {
 		return 0, nil, false, nil
 	}

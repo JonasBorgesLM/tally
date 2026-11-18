@@ -7,14 +7,18 @@ import (
 	"encoding/json"
 	"iter"
 	"os"
+	"slices"
 	"testing"
 
+	"github.com/JonasBorgesLM/tally/internal/merkle"
 	"github.com/JonasBorgesLM/tally/internal/note"
 )
 
-// The published checkpoint vector (SPEC §5.2, §8): one checkpoint over the
-// head of records.json, signed with the key of keys.json. Written once with
-// -write-vectors and committed, like the others.
+// The published checkpoint vectors (SPEC §5.2, §8): over the five leaves of
+// records.json, signed with the key of keys.json, one of each body: the v0.1
+// tally-chain/v1 checkpoint, and v0.2's tally-heartbeat/v1 note and
+// tlog-checkpoint (#60), whose root is merkle.json's root of 5. Written once
+// with -write-vectors and committed, like the others.
 
 const checkpointVectorsPath = "testdata/vectors/checkpoints.json"
 
@@ -24,8 +28,10 @@ type checkpointVectorFile struct {
 }
 
 type checkpointVector struct {
+	Kind    string `json:"kind"`
 	Size    uint64 `json:"size,string"`
-	HeadHex string `json:"head_hex"`
+	HeadHex string `json:"head_hex,omitempty"`
+	RootHex string `json:"root_hex,omitempty"`
 	Text    string `json:"text"`
 	Note    string `json:"note"`
 }
@@ -56,21 +62,44 @@ func (s vectorSource) Checkpoints(context.Context) iter.Seq2[SignedCheckpoint, e
 	}
 }
 
-func makeCheckpointVector(t *testing.T, bodies [][]byte) checkpointVector {
+func makeCheckpointVectors(t *testing.T, bodies [][]byte) []checkpointVector {
 	t.Helper()
 	keys := makeKeyVectors(t)
 	s, err := note.NewSigner(keys.Keys[0].SignerKey)
 	if err != nil {
 		t.Fatal(err)
 	}
+	size := uint64(len(bodies))
 	head := LeafHash(bodies[len(bodies)-1])
-	// recorded_at: the head entry's, from records.json, in SPEC §5.2's layout.
-	text := checkpointText("example.com/log", uint64(len(bodies)), head, 0x0102030405060708+40, stateClosed)
-	msg, err := note.Sign([]byte(text), s)
+	tree := new(merkle.Range)
+	for _, b := range bodies {
+		tree.Append(LeafHash(b))
+	}
+	root, err := tree.Root()
 	if err != nil {
 		t.Fatal(err)
 	}
-	return checkpointVector{Size: uint64(len(bodies)), HeadHex: hex.EncodeToString(head[:]), Text: text, Note: string(msg)}
+	// recorded_at: the head entry's, from records.json, in SPEC §5.2's layout.
+	at := int64(0x0102030405060708 + 40)
+	sign := func(kind, text string, withHead, withRoot bool) checkpointVector {
+		msg, err := note.Sign([]byte(text), s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		v := checkpointVector{Kind: kind, Size: size, Text: text, Note: string(msg)}
+		if withHead {
+			v.HeadHex = hex.EncodeToString(head[:])
+		}
+		if withRoot {
+			v.RootHex = hex.EncodeToString(root[:])
+		}
+		return v
+	}
+	return []checkpointVector{
+		sign(bodyChainV1, checkpointText("example.com/log", size, head, at, stateClosed), true, false),
+		sign(bodyHeartbeatV1, heartbeatText("example.com/log", size, head, root, at, stateClosed), true, true),
+		sign("tlog-checkpoint", tlogText("example.com/log", size, root), false, true),
+	}
 }
 
 // The committed checkpoint is what this implementation signs, and Verify over
@@ -97,11 +126,12 @@ func TestCheckpointVectors(t *testing.T) {
 		bodies = append(bodies, b)
 	}
 
-	want := makeCheckpointVector(t, bodies)
+	want := makeCheckpointVectors(t, bodies)
 	if *writeVectors {
 		out, merr := json.MarshalIndent(checkpointVectorFile{
-			Comment:     "tally SPEC v1 checkpoint vector over records.json, signed with the PUBLIC test key of keys.json. See README.md.",
-			Checkpoints: []checkpointVector{want},
+			Comment: "tally SPEC checkpoint vectors over records.json, one of each body (tally-chain/v1, tally-heartbeat/v1, " +
+				"tlog-checkpoint), signed with the PUBLIC test key of keys.json. See README.md.",
+			Checkpoints: want,
 		}, "", "  ")
 		if merr != nil {
 			t.Fatal(merr)
@@ -121,18 +151,29 @@ func TestCheckpointVectors(t *testing.T) {
 	if derr := dec.Decode(&got); derr != nil {
 		t.Fatal(derr)
 	}
-	if len(got.Checkpoints) != 1 || got.Checkpoints[0] != want {
-		t.Fatalf("the committed checkpoint vector differs from what this implementation signs")
+	if !slices.Equal(got.Checkpoints, want) {
+		t.Fatalf("the committed checkpoint vectors differ from what this implementation signs")
 	}
 
 	keys, err := NewVerifiers(makeKeyVectors(t).Keys[0].VerifierKey)
 	if err != nil {
 		t.Fatal(err)
 	}
-	src := vectorSource{bodies: bodies, cps: []SignedCheckpoint{SignedCheckpoint(got.Checkpoints[0].Note)}}
-	rep, err := Verify(context.Background(), src, keys)
-	if err != nil || !rep.OK() || rep.Size != 5 || rep.AttestedSize != 5 {
-		t.Fatalf("Verify over the vectors = %+v, %v; want OK with all 5 leaves attested", rep, err)
+	// Each body alone attests the whole log, and so do the three together.
+	ran := 0
+	for _, set := range [][]checkpointVector{got.Checkpoints[:1], got.Checkpoints[1:2], got.Checkpoints[2:], got.Checkpoints} {
+		cps := make([]SignedCheckpoint, 0, len(set))
+		for _, v := range set {
+			cps = append(cps, SignedCheckpoint(v.Note))
+		}
+		rep, err := Verify(context.Background(), vectorSource{bodies: bodies, cps: cps}, keys)
+		if err != nil || !rep.OK() || rep.Size != 5 || rep.AttestedSize != 5 {
+			t.Fatalf("Verify over the vectors with %d of them = %+v, %v; want OK with all 5 leaves attested", len(set), rep, err)
+		}
+		ran++
+	}
+	if ran != 4 {
+		t.Fatalf("ran %d sets, want 4", ran)
 	}
 }
 
@@ -148,12 +189,14 @@ func TestCheckpointSize(t *testing.T) {
 	if err = json.Unmarshal(raw, &f); err != nil {
 		t.Fatal(err)
 	}
-	if len(f.Checkpoints) != 1 {
-		t.Fatalf("%d checkpoint vectors, want 1", len(f.Checkpoints))
+	if len(f.Checkpoints) != 3 {
+		t.Fatalf("%d checkpoint vectors, want 3", len(f.Checkpoints))
 	}
-	got, err := CheckpointSize(SignedCheckpoint(f.Checkpoints[0].Note))
-	if err != nil || got != f.Checkpoints[0].Size {
-		t.Fatalf("CheckpointSize = %d, %v; want %d", got, err, f.Checkpoints[0].Size)
+	for _, v := range f.Checkpoints {
+		got, err := CheckpointSize(SignedCheckpoint(v.Note))
+		if err != nil || got != v.Size {
+			t.Fatalf("%s: CheckpointSize = %d, %v; want %d", v.Kind, got, err, v.Size)
+		}
 	}
 	for _, bad := range []string{"", "not a note", "a\nb\n\n— sig\n"} {
 		if _, err := CheckpointSize(SignedCheckpoint(bad)); err == nil {

@@ -258,8 +258,13 @@ func (l *Log) load(ctx context.Context, origin string) error {
 			return nil
 		}
 		compared = true
-		if l.head.prevLeaf != stored.head {
+		if stored.hasHead && l.head.prevLeaf != stored.head {
 			return fmt.Errorf("%w: the leaf at %d differs from its head", ErrStoredCheckpointMismatch, stored.size)
+		}
+		if stored.hasRoot && l.head.tree != nil {
+			if root, err := l.head.tree.Root(); err == nil && root != stored.root {
+				return fmt.Errorf("%w: the tree at %d differs from its root", ErrStoredCheckpointMismatch, stored.size)
+			}
 		}
 		return nil
 	}

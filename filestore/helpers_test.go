@@ -181,8 +181,9 @@ func vectorBodies(t *testing.T) [][]byte {
 	return bodies
 }
 
-// vectorCheckpoint returns the signed note of testdata/vectors/checkpoints.json,
-// over the head of records.json.
+// vectorCheckpoint returns the tally-chain/v1 note of
+// testdata/vectors/checkpoints.json, over the head of records.json: the one
+// segments.json stores.
 func vectorCheckpoint(t *testing.T) tally.SignedCheckpoint {
 	t.Helper()
 	b, err := os.ReadFile("../testdata/vectors/checkpoints.json")
@@ -191,16 +192,20 @@ func vectorCheckpoint(t *testing.T) tally.SignedCheckpoint {
 	}
 	var file struct {
 		Checkpoints []struct {
+			Kind string `json:"kind"`
 			Note string `json:"note"`
 		} `json:"checkpoints"`
 	}
 	if err := json.Unmarshal(b, &file); err != nil {
 		t.Fatal(err)
 	}
-	if len(file.Checkpoints) != 1 {
-		t.Fatalf("checkpoints.json holds %d checkpoints, want 1", len(file.Checkpoints))
+	for _, c := range file.Checkpoints {
+		if c.Kind == "tally-chain/v1" {
+			return tally.SignedCheckpoint(c.Note)
+		}
 	}
-	return tally.SignedCheckpoint(file.Checkpoints[0].Note)
+	t.Fatal("checkpoints.json holds no tally-chain/v1 checkpoint")
+	return nil
 }
 
 func records(bodies [][]byte, from uint64) []tally.Record {

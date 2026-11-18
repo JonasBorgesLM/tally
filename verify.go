@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/JonasBorgesLM/tally/internal/merkle"
 	"github.com/JonasBorgesLM/tally/internal/note"
 )
 
@@ -141,11 +142,17 @@ func WithRequireFullyAttested() VerifyOption {
 
 // checkpoint is an accepted checkpoint (SPEC §5.4 step 5).
 type checkpoint struct {
-	origin   string
-	size     uint64
-	head     [32]byte
-	at       int64
-	closed   bool
+	origin string
+	size   uint64
+	// head, at and closed are set when hasHead: a tally-chain/v1 checkpoint
+	// or a tally-heartbeat/v1 note. A tlog-checkpoint has neither (SPEC §5.2).
+	head    [32]byte
+	at      int64
+	closed  bool
+	hasHead bool
+	// root is set when hasRoot: a tlog-checkpoint or a heartbeat note.
+	root     [32]byte
+	hasRoot  bool
 	start    bool // the caller's start checkpoint
 	anchored bool // read from an anchor
 }
@@ -199,54 +206,130 @@ func VerifyCheckpoint(cp SignedCheckpoint, keys Verifiers) error {
 	return nil
 }
 
-// parseCheckpointBody is SPEC §5.2, strictly.
+// The second line of each tally body (SPEC §5.2). A tlog-checkpoint has the
+// size there instead, so no body is ever read as another.
+const (
+	bodyChainV1     = "tally-chain/v1"
+	bodyHeartbeatV1 = "tally-heartbeat/v1"
+)
+
+// parseCheckpointBody is SPEC §5.2, strictly: a tally-chain/v1 checkpoint
+// (v0.1), a tally-heartbeat/v1 note, or a tlog-checkpoint (v0.2, #60).
 func parseCheckpointBody(text []byte) (checkpoint, *Failure) {
 	bad := func(why string) (checkpoint, *Failure) {
 		return checkpoint{}, &Failure{Kind: MalformedRecord, Note: "checkpoint: " + why}
 	}
+	if !bytes.HasSuffix(text, []byte("\n")) {
+		return bad("the body does not end in a newline")
+	}
 	lines := strings.Split(string(bytes.TrimSuffix(text, []byte("\n"))), "\n")
-	if len(lines) != 6 || !bytes.HasSuffix(text, []byte("\n")) {
-		return bad("the body is not six lines")
+	if len(lines) < 3 {
+		return bad("the body has fewer than three lines")
 	}
-	if lines[1] != "tally-chain/v1" {
-		return bad("line 2 is not tally-chain/v1")
+	var c checkpoint
+	var f *Failure
+	switch lines[1] {
+	case bodyChainV1:
+		if len(lines) != 6 {
+			return bad("a tally-chain/v1 body is not six lines")
+		}
+		c.origin = lines[0]
+		if c.size, f = parseSize(lines[2]); f != nil {
+			return checkpoint{}, f
+		}
+		if c.head, f = parseHash(lines[3], c.size, "the head"); f != nil {
+			return checkpoint{}, f
+		}
+		if c.at, c.closed, f = parseTimeState(lines[4], lines[5]); f != nil {
+			return checkpoint{}, f
+		}
+		c.hasHead = true
+	case bodyHeartbeatV1:
+		if len(lines) != 7 {
+			return bad("a tally-heartbeat/v1 body is not seven lines")
+		}
+		c.origin = lines[0]
+		if c.size, f = parseSize(lines[2]); f != nil {
+			return checkpoint{}, f
+		}
+		if c.head, f = parseHash(lines[3], c.size, "the head"); f != nil {
+			return checkpoint{}, f
+		}
+		if c.root, f = parseHash(lines[4], c.size, "the root"); f != nil {
+			return checkpoint{}, f
+		}
+		if c.at, c.closed, f = parseTimeState(lines[5], lines[6]); f != nil {
+			return checkpoint{}, f
+		}
+		c.hasHead, c.hasRoot = true, true
+	default:
+		// A tlog-checkpoint: origin, size, root. tally writes no extension
+		// lines and accepts none (ADR-0006's amendment).
+		if len(lines) != 3 {
+			return bad("neither a tally body nor a three-line tlog-checkpoint")
+		}
+		c.origin = lines[0]
+		if c.size, f = parseSize(lines[1]); f != nil {
+			return checkpoint{}, f
+		}
+		if c.root, f = parseHash(lines[2], c.size, "the root"); f != nil {
+			return checkpoint{}, f
+		}
+		c.hasRoot = true
 	}
-	sizeLine := lines[2]
-	if sizeLine == "" || (len(sizeLine) > 1 && sizeLine[0] == '0') {
-		return bad("size is not a decimal without leading zeros")
+	return c, nil
+}
+
+// parseSize is a size line: a decimal of at least 1, no leading zeros, that
+// fits in a uint64.
+func parseSize(line string) (uint64, *Failure) {
+	bad := &Failure{Kind: MalformedRecord, Note: "checkpoint: size is not a decimal of at least 1 without leading zeros"}
+	if line == "" || (len(line) > 1 && line[0] == '0') {
+		return 0, bad
 	}
-	size, err := strconv.ParseUint(sizeLine, 10, 64)
-	if err != nil || size == 0 || strconv.FormatUint(size, 10) != sizeLine {
-		return bad("size is not a decimal of at least 1")
+	size, err := strconv.ParseUint(line, 10, 64)
+	if err != nil || size == 0 || strconv.FormatUint(size, 10) != line {
+		return 0, bad
 	}
-	raw, err := base64.StdEncoding.DecodeString(lines[3])
+	return size, nil
+}
+
+// parseHash is a hash line: canonical, padded, standard base64 of 32 bytes.
+func parseHash(line string, size uint64, what string) ([32]byte, *Failure) {
+	var h [32]byte
+	raw, err := base64.StdEncoding.DecodeString(line)
 	if err != nil || len(raw) != 32 {
-		return bad("the head is not base64 of 32 bytes")
+		return h, &Failure{Kind: MalformedRecord, Note: "checkpoint: " + what + " is not base64 of 32 bytes"}
 	}
-	if base64.StdEncoding.EncodeToString(raw) != lines[3] {
-		return checkpoint{}, &Failure{Kind: NonCanonicalEncoding, Seq: size, Note: "checkpoint: the head is not canonical base64"}
+	if base64.StdEncoding.EncodeToString(raw) != line {
+		return h, &Failure{Kind: NonCanonicalEncoding, Seq: size, Note: "checkpoint: " + what + " is not canonical base64"}
 	}
-	t, err := time.Parse(checkpointTimeLayout, lines[4])
-	if err != nil || t.UTC().Format(checkpointTimeLayout) != lines[4] {
+	copy(h[:], raw)
+	return h, nil
+}
+
+// parseTimeState is the recorded_at and state lines.
+func parseTimeState(timeLine, stateLine string) (at int64, closed bool, fail *Failure) {
+	bad := func(why string) (int64, bool, *Failure) {
+		return 0, false, &Failure{Kind: MalformedRecord, Note: "checkpoint: " + why}
+	}
+	t, err := time.Parse(checkpointTimeLayout, timeLine)
+	if err != nil || t.UTC().Format(checkpointTimeLayout) != timeLine {
 		return bad("recorded_at is not in SPEC §5.2's layout")
 	}
 	// The layout admits years 0000 to 9999, and int64 nanoseconds only 1677
 	// to 2262: outside that, UnixNano wraps and the checkpoint would be judged
 	// at another time entirely (found by FuzzCheckpointBody).
-	if time.Unix(0, t.UnixNano()).UTC().Format(checkpointTimeLayout) != lines[4] {
+	if time.Unix(0, t.UnixNano()).UTC().Format(checkpointTimeLayout) != timeLine {
 		return bad("recorded_at is outside the range of int64 nanoseconds")
 	}
-	var closed bool
-	switch lines[5] {
+	switch stateLine {
 	case stateOpen:
+		return t.UnixNano(), false, nil
 	case stateClosed:
-		closed = true
-	default:
-		return bad("state is neither open nor closed")
+		return t.UnixNano(), true, nil
 	}
-	c := checkpoint{origin: lines[0], size: size, at: t.UnixNano(), closed: closed}
-	copy(c.head[:], raw)
-	return c, nil
+	return bad("state is neither open nor closed")
 }
 
 // Verify verifies the log held by src (SPEC §7) and returns a Report of the
@@ -271,6 +354,11 @@ func Verify(ctx context.Context, src Source, keys Verifiers, opts ...VerifyOptio
 		c, f := readCheckpoint(cfg.start, keys)
 		if f != nil {
 			return nil, fmt.Errorf("%w: %v: %s", ErrUntrustedStart, f.Kind, f.Note)
+		}
+		if !c.hasHead {
+			// Reading starts at the leaf before the start, which only a head
+			// names; a tlog-checkpoint's root needs the tree below it.
+			return nil, fmt.Errorf("%w: a tlog-checkpoint has no head to start from; start from the heartbeat note of its size", ErrUntrustedStart)
 		}
 		c.start = true
 		cps = append(cps, c)
@@ -337,10 +425,15 @@ func Verify(ctx context.Context, src Source, keys Verifiers, opts ...VerifyOptio
 		first    = true
 		f        uint64 // first_seq of the first record read
 		boundary [32]byte
-		broke    *violation // the first record-level violation
-		read     bool
+		// boundaryRoot is the tree's root at f, when a stored range gives it:
+		// what a tlog-checkpoint of size f is compared with.
+		boundaryRoot    [32]byte
+		hasBoundaryRoot bool
+		broke           *violation // the first record-level violation
+		read            bool
 	)
-	next := 0 // the first checkpoint not yet reached by the stream
+	chain.tree = new(merkle.Range) // from leaf 0, unless the read starts above it
+	next := 0                      // the first checkpoint not yet reached by the stream
 	for r, err := range src.Records(ctx, from) {
 		var me *MalformedError
 		if errors.As(err, &me) {
@@ -370,6 +463,18 @@ func Verify(ctx context.Context, src Source, keys Verifiers, opts ...VerifyOptio
 				}
 				chain = chainState{size: f, logID: e.logID, prevLeaf: e.prevHash, prevTime: math.MinInt64}
 				boundary = e.prevHash
+				// The tree below f comes only from a stored range, which the
+				// host wrote: it is worth what the signed roots it reproduces
+				// say. Without one, or with one that does not fit, roots are
+				// not compared (SPEC §3.6).
+				if tree, pending, err := storedTree(ctx, src, f); err == nil {
+					chain.tree, chain.pending = tree, pending
+					if tree != nil {
+						if r, rerr := tree.Root(); rerr == nil {
+							boundaryRoot, hasBoundaryRoot = r, true
+						}
+					}
+				}
 			}
 			for next < len(cps) && cps[next].size < f+1 {
 				next++ // below what is read: judged after the stream
@@ -387,16 +492,9 @@ func Verify(ctx context.Context, src Source, keys Verifiers, opts ...VerifyOptio
 		for next < len(cps) && cps[next].size == chain.size {
 			c := cps[next]
 			if c.origin == chain.origin || chain.origin == "" {
-				switch {
-				case c.head != chain.prevLeaf:
-					rep.Failures = append(rep.Failures, Failure{Kind: mismatchKind(c), Seq: c.size - 1,
-						Note: "a checkpoint's head differs from the stored leaf"})
-				case c.at < chain.prevTime:
-					rep.Failures = append(rep.Failures, Failure{Kind: TimeRegression, Seq: c.size - 1,
-						Note: "a checkpoint's recorded_at is before its head leaf's"})
-				default:
-					matched[next] = true
-				}
+				fail := compareWithLeaf(c, chain)
+				rep.Failures = append(rep.Failures, fail...)
+				matched[next] = len(fail) == 0 && (c.hasHead || (c.hasRoot && chain.tree != nil))
 			}
 			next++
 		}
@@ -445,11 +543,15 @@ func Verify(ctx context.Context, src Source, keys Verifiers, opts ...VerifyOptio
 			rep.Failures = append(rep.Failures, Failure{Kind: CheckpointMismatch, Seq: c.size, Note: "a checkpoint names another origin"})
 			matched[i] = false
 		case c.size == f && f > 0 && !first: // only once the boundary was read
-			if c.head == boundary {
-				matched[i] = true
-			} else {
+			switch {
+			case c.hasHead && c.head != boundary:
 				rep.Failures = append(rep.Failures, Failure{Kind: mismatchKind(c), Seq: c.size - 1,
 					Note: "a checkpoint's head differs from the first record's prev_hash"})
+			case c.hasRoot && hasBoundaryRoot && c.root != boundaryRoot:
+				rep.Failures = append(rep.Failures, Failure{Kind: mismatchKind(c), Seq: c.size - 1,
+					Note: "a checkpoint's root differs from the stored range's"})
+			case c.hasHead || hasBoundaryRoot:
+				matched[i] = true
 			}
 		case c.size > rep.Size && broke == nil:
 			rep.Failures = append(rep.Failures, Failure{Kind: TruncatedBelowCheckpoint, Seq: rep.Size,
@@ -457,19 +559,20 @@ func Verify(ctx context.Context, src Source, keys Verifiers, opts ...VerifyOptio
 		}
 	}
 
-	// Step 6: order. Two checkpoints of one size with different heads are a
-	// fork; recorded_at never decreases along increasing size.
-	for i := 1; i < len(cps); i++ {
-		a, b := cps[i-1], cps[i]
-		if a.origin != origin || b.origin != origin {
+	// Step 6: order. Two checkpoints of one size with different heads, or
+	// different roots, are a fork; recorded_at never decreases along
+	// increasing size, among the checkpoints that carry one.
+	rep.Failures = append(rep.Failures, forks(cps, origin)...)
+	var prevTimed *checkpoint
+	for i := range cps {
+		c := &cps[i]
+		if c.origin != origin || !c.hasHead {
 			continue
 		}
-		if a.size == b.size && a.head != b.head {
-			rep.Failures = append(rep.Failures, Failure{Kind: ForkDetected, Seq: a.size, Note: "two checkpoints of one size with different heads"})
+		if prevTimed != nil && c.at < prevTimed.at {
+			rep.Failures = append(rep.Failures, Failure{Kind: TimeRegression, Seq: c.size, Note: "a checkpoint of larger size claims an earlier time"})
 		}
-		if b.at < a.at {
-			rep.Failures = append(rep.Failures, Failure{Kind: TimeRegression, Seq: b.size, Note: "a checkpoint of larger size claims an earlier time"})
-		}
+		prevTimed = c
 	}
 
 	// Step 7: a start above leaf 0 needs a matched checkpoint at or above it.
@@ -557,8 +660,8 @@ func heartbeatGaps(cps []checkpoint, origin string, hb *heartbeat) []Failure {
 	)
 	for i := range cps {
 		c := &cps[i]
-		if !c.anchored || c.origin != origin {
-			continue
+		if !c.anchored || c.origin != origin || !c.hasHead {
+			continue // a tlog-checkpoint carries no time (ADR-0006's amendment)
 		}
 		// A time after now cannot be judged against now, and would hide every
 		// gap behind it: report it rather than let it pass (audit A-06, #128).
@@ -580,4 +683,61 @@ func heartbeatGaps(cps []checkpoint, origin string, hb *heartbeat) []Failure {
 			Note: fmt.Sprintf("%v since the last anchored checkpoint, over %v", hb.now.Sub(time.Unix(0, prev.at)), limit)})
 	}
 	return gaps
+}
+
+// compareWithLeaf is SPEC §7 step 5 for a checkpoint whose size the stream
+// has just reached: its head against the leaf, its time against the leaf's,
+// and its root against the tree when the tree is known.
+func compareWithLeaf(c checkpoint, chain chainState) []Failure {
+	if c.hasHead {
+		if c.head != chain.prevLeaf {
+			return []Failure{{Kind: mismatchKind(c), Seq: c.size - 1, Note: "a checkpoint's head differs from the stored leaf"}}
+		}
+		if c.at < chain.prevTime {
+			return []Failure{{Kind: TimeRegression, Seq: c.size - 1, Note: "a checkpoint's recorded_at is before its head leaf's"}}
+		}
+	}
+	if c.hasRoot && chain.tree != nil {
+		if root, err := chain.tree.Root(); err == nil && root != c.root {
+			return []Failure{{Kind: mismatchKind(c), Seq: c.size - 1, Note: "a checkpoint's root differs from the log's tree"}}
+		}
+	}
+	return nil
+}
+
+// forks is step 6's fork rule: within each size, every pair that carries a
+// head, and every pair that carries a root, must agree. cps is sorted by size.
+func forks(cps []checkpoint, origin string) []Failure {
+	var out []Failure
+	for lo := 0; lo < len(cps); {
+		hi := lo
+		for hi < len(cps) && cps[hi].size == cps[lo].size {
+			hi++
+		}
+		var head, root *checkpoint
+		forked := false
+		for i := lo; i < hi && !forked; i++ {
+			c := &cps[i]
+			if c.origin != origin {
+				continue
+			}
+			if c.hasHead {
+				if head != nil && head.head != c.head {
+					forked = true
+				}
+				head = c
+			}
+			if c.hasRoot {
+				if root != nil && root.root != c.root {
+					forked = true
+				}
+				root = c
+			}
+		}
+		if forked {
+			out = append(out, Failure{Kind: ForkDetected, Seq: cps[lo].size, Note: "two checkpoints of one size with different heads or roots"})
+		}
+		lo = hi
+	}
+	return out
 }
