@@ -3,8 +3,8 @@
 One maintainer cuts releases. These are the steps that are easy to get backwards under pressure. The branch
 model is in [`CONTRIBUTING.md`](CONTRIBUTING.md#git-flow).
 
-**No release has been cut, and the release workflow does not exist yet (#57).** The steps below are vane's,
-which have been run; what is specific to tally's verifier is marked as not yet exercised.
+**No release has been cut.** The release workflow exists (`.github/workflows/release.yml`, #57) and has not yet
+run on a tag: `v0.1.0-rc.1` (#58) is its first run. The steps below are vane's, which have been run.
 
 ## Before the first tag
 
@@ -57,11 +57,51 @@ gh pr create --base develop --head main \
 gh pr merge --merge
 ```
 
-## What the verifier's release must carry (not yet exercised, #57)
+## What the workflow does with a tag (ADR-0014, #57)
 
-`tally verify` is the auditor's root of trust (ADR-0014, T-18), so beyond the steps above: a build with
-`-trimpath` and an embedded version, two builds of one tag compared byte for byte, signed checksums, an SBOM, and
-build provenance. Each refusal path in the workflow gets watched failing before anyone trusts it.
+`tally verify` is the auditor's root of trust (T-18), so pushing a tag runs `release.yml`, which publishes nothing
+until every step below has passed:
+
+1. **verify.** `.github/scripts/check-release-tag.sh` refuses a tag that is:
+   - not `vX.Y.Z` or `vX.Y.Z-rc.N`;
+   - on a commit that is not on `main`;
+   - not the newest tag;
+   - without a CHANGELOG section;
+   - lightweight, unsigned, or signed by a key that is not in `.github/allowed_signers`.
+
+   CI's "release checks" job sees each of those refusals fail on every pull request, in a throwaway repository
+   (`test-check-release-tag.sh`). Then verify builds and tests the module as a consumer resolves it, runs interop
+   and govulncheck, and generates the API diff.
+2. **build, twice.** `.github/scripts/build-release.sh` builds `tally` for linux and darwin, amd64 and arm64:
+   `CGO_ENABLED=0`, `-trimpath`, `-buildid=`, `-s -w`, and `-X main.version=<tag>`, so `tally version` names the
+   release. It runs on two runners, from two checkouts, with no cache.
+3. **reproducible.** The two builds are compared byte for byte, and any difference stops the release. CI's
+   "release checks" job does the same on every pull request, so a change that breaks reproducibility fails
+   there first.
+4. **release.**
+   - The files: the binaries, an uncompressed source tarball, a CycloneDX SBOM of the binary (empty of
+     components, since the module is stdlib only), and `SHA256SUMS`.
+   - Build provenance for every file, signed through Sigstore with the workflow's identity.
+   - Notes from the CHANGELOG section and the API diff, with the commands below.
+
+### How an auditor checks a release
+
+```bash
+sha256sum -c SHA256SUMS --ignore-missing
+gh attestation verify tally_vX.Y.Z_linux_amd64 --repo JonasBorgesLM/tally
+./tally_vX.Y.Z_linux_amd64 version          # tally vX.Y.Z
+```
+
+Or rebuild it and compare. From a checkout of the tag, with the Go version the notes name:
+
+```bash
+./.github/scripts/build-release.sh ./rebuilt vX.Y.Z && sha256sum ./rebuilt/*
+```
+
+`gh attestation verify` is not yet tried on a real release; `v0.1.0-rc.1` is where it is (#58). What provenance
+does not cover: a compromised CI still attests what it built, since provenance names the pipeline, not its
+honesty (ADR-0014). The rebuild is the check that does not depend on it, and SPEC is enough to write a verifier
+of one's own.
 
 ## A bad release
 

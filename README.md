@@ -145,6 +145,20 @@ container. usher's README, "End to end", gives the same pull from a second machi
 run**. usher's CI runs the demo on every relevant change, beside a check that alters and truncates a real
 log, and a load test of `/token` with every issuance recorded (RI-05).
 
+## Verifying a release
+
+A `tally` binary from a release is built reproducibly, so two builds of one tag are byte-identical, checked by
+CI. It carries build provenance, and `tally version` names its tag (ADR-0014). Before trusting one to say a log
+is intact:
+
+```bash
+sha256sum -c SHA256SUMS --ignore-missing
+gh attestation verify tally_vX.Y.Z_linux_amd64 --repo JonasBorgesLM/tally
+```
+
+Or rebuild it from the tag and compare; [RELEASING.md](RELEASING.md#how-an-auditor-checks-a-release) gives the
+command. No release has been cut yet.
+
 ## Mirroring to crier
 
 **crier is not the audit record; tally is** (RI-03). crier is the ecosystem's observability pipeline, and its
