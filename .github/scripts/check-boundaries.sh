@@ -25,7 +25,7 @@ export CGO_ENABLED=0
 MOD=$(go list -m) || { echo "go list -m failed; the module does not resolve"; exit 1; }
 
 # Every package of this module, relative to the module, "." for the root.
-KNOWN=". anchor attack cmd/tally filestore seal tallytest internal/fsx internal/note internal/wire"
+KNOWN=". anchor attack cmd/tally filestore seal tallytest internal/fsx internal/merkle internal/note internal/wire"
 
 FAILED=0
 fail() { printf '\n\033[31mFAIL\033[0m  %s\n' "$1"; FAILED=1; }
