@@ -238,7 +238,29 @@ func Open(ctx context.Context, s Store, signer Signer, opts ...Option) (*Log, er
 
 // load reads the stored chain into l.head, or writes a genesis on an empty
 // store.
+//
+// The last stored checkpoint is read first, and the leaf at its size is
+// compared with its head as the chain is reread (architecture.md, "Recovery",
+// step 4): a rewritten log that its own signed checkpoint contradicts is
+// refused, never signed over (ErrStoredCheckpointMismatch). A log whose
+// checkpoints were deleted as well cannot be told from one that never had any
+// here; only an anchor shows it (T-06).
 func (l *Log) load(ctx context.Context, origin string) error {
+	stored, cpErr := l.readLastStoredCheckpoint(ctx)
+	if cpErr != nil {
+		return cpErr
+	}
+	compared := false
+	compare := func() error {
+		if stored == nil || compared || l.head.size != stored.size {
+			return nil
+		}
+		compared = true
+		if l.head.prevLeaf != stored.head {
+			return fmt.Errorf("%w: the leaf at %d differs from its head", ErrStoredCheckpointMismatch, stored.size)
+		}
+		return nil
+	}
 	first := true
 	for r, err := range l.store.Records(ctx, 0) {
 		if err != nil {
@@ -253,6 +275,9 @@ func (l *Log) load(ctx context.Context, origin string) error {
 				return fmt.Errorf("tally: the first stored record, %d, is not a valid entry", r.Seq)
 			}
 			l.head = chainState{size: r.Seq, logID: e.logID, origin: origin, prevLeaf: e.prevHash, prevTime: math.MinInt64}
+			if err := compare(); err != nil {
+				return err
+			}
 		}
 		first = false
 		if r.Seq != l.head.size {
@@ -261,6 +286,9 @@ func (l *Log) load(ctx context.Context, origin string) error {
 		rec, v := l.head.add(r.Body)
 		if v != nil {
 			return fmt.Errorf("tally: the stored log does not verify: %w", v)
+		}
+		if err := compare(); err != nil {
+			return err
 		}
 		// Rebuild the idempotency window from the same read (RF-04).
 		if e, ok := rec.(*entry); ok {
@@ -271,11 +299,20 @@ func (l *Log) load(ctx context.Context, origin string) error {
 			l.window.add(string(e.eventID), seen{seq: e.seq, leaf: l.head.prevLeaf, fingerprint: fp})
 		}
 	}
+	if stored != nil && !compared && stored.size > l.head.size {
+		return fmt.Errorf("%w: the log ends at %d leaves, below it at %d", ErrStoredCheckpointMismatch, l.head.size, stored.size)
+	}
 	if l.head.size > 0 {
 		if l.head.origin != origin {
 			return fmt.Errorf("tally: the log's origin is %q, the signer's name is %q", l.head.origin, origin)
 		}
-		return l.loadLastCheckpoint(ctx)
+		// The entry trigger counts from the last checkpoint, and a new one never
+		// claims an earlier time (SPEC §7 step 6).
+		l.lastCP = lastCheckpoint{size: 1} // the entry trigger counts entries, not genesis
+		if stored != nil {
+			l.lastCP = lastCheckpoint{size: min(stored.size, l.head.size), at: stored.at}
+		}
+		return nil
 	}
 
 	g := &genesis{createdAt: l.cfg.clock.Now().UnixNano(), origin: origin}

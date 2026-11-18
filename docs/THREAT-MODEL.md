@@ -91,8 +91,14 @@ cannot inspect any of this.
 
 ### T-06 — Rewrite from a point, without the key
 **Actor:** outsider with file write. **Impact:** a consistent false suffix.
-**Mitigation:** RF-06, RF-10: existing checkpoint signatures fail. RS-06 keeps the key separate.
-**Residual:** if the rewrite leaves all checkpoints intact it can only touch the tail, as T-01.
+**Mitigation:** RF-06, RF-10: existing checkpoint signatures fail. RS-06 keeps the key separate. The writer refuses
+to reopen a log its own last stored checkpoint contradicts (`ErrStoredCheckpointMismatch`, #126), so it never signs
+over such a rewrite. An anchored checkpoint over the original detects it as `ForkDetected`.
+**Residual:** records are not signed. A rewrite that also deletes the stored checkpoints after the point it rewrites
+from, all of them or only the later ones, leaves nothing local to contradict it: the writer reopens it, and its next
+checkpoint signs the rewritten history with the real key. **Without an anchor, that verifies fully attested**; only a
+checkpoint anchored before the rewrite detects it. With every checkpoint intact, the rewrite can only touch the tail,
+as T-01. Found by the clean-session audit (A-01).
 
 ### T-07 — Rewrite with the key, host compromised
 **Actor:** host attacker. **Impact:** a fully consistent, correctly signed false history.

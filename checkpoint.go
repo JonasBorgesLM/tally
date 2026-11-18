@@ -1,8 +1,10 @@
 package tally
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"strconv"
@@ -162,31 +164,73 @@ func checkpointText(origin string, size uint64, head [32]byte, at int64, state s
 	return b.String()
 }
 
-// loadLastCheckpoint recovers, on reopen, the size and time of the last stored
-// checkpoint, so that the entry trigger counts from it and a new checkpoint
-// never claims an earlier time than one already stored (SPEC §7 step 6).
+// ErrStoredCheckpointMismatch means the stored log contradicts its own last
+// stored checkpoint: the leaf at that checkpoint's size differs from its head,
+// the log ends below it, or its signature under this log's key is not that
+// key's (audit A-01, #126). Open refuses rather than append after it: the
+// writer would otherwise sign the next checkpoint over a history its own
+// signed checkpoint says is not the log's.
+var ErrStoredCheckpointMismatch = errors.New("tally: the stored log contradicts its own last checkpoint")
+
+// readLastStoredCheckpoint returns the last checkpoint the store holds,
+// parsed, or nil if it holds none.
 //
-// It reads only what it needs, and caps a stored size above the head: the
-// subtraction in dueByEntries must not wrap. Refusing to open a store cut
-// below its last checkpoint is recovery's job (RF-20, #34), not this one's.
-func (l *Log) loadLastCheckpoint(ctx context.Context) error {
+// A checkpoint that names this log's signer must be that signer's signature
+// over its text. The signer holds no public key to check one with, but
+// Ed25519 signatures are deterministic (RFC 8032, the only algorithm SPEC §5.3
+// allows): signing the same text again reproduces the stored note byte for
+// byte. A checkpoint under another key, from before a rotation, is not
+// checked here; its head still is, in load.
+func (l *Log) readLastStoredCheckpoint(ctx context.Context) (*checkpoint, error) {
 	var last SignedCheckpoint
 	for cp, err := range l.store.Checkpoints(ctx) {
 		if err != nil {
-			return fmt.Errorf("tally: reading the stored checkpoints: %w", err)
+			return nil, fmt.Errorf("tally: reading the stored checkpoints: %w", err)
 		}
 		last = cp
 	}
 	if last == nil {
-		l.lastCP = lastCheckpoint{size: 1} // the entry trigger counts entries, not genesis
-		return nil
+		return nil, nil
 	}
-	size, at, ok := parseCheckpointHead(last)
-	if !ok {
-		return fmt.Errorf("tally: the last stored checkpoint does not parse")
+	split := bytes.LastIndex(last, []byte("\n\n"))
+	if split < 0 {
+		return nil, fmt.Errorf("%w: the last one is not a signed note", ErrStoredCheckpointMismatch)
 	}
-	l.lastCP = lastCheckpoint{size: min(size, l.head.size), at: at}
-	return nil
+	text := last[:split+1]
+	body, f := parseCheckpointBody(text)
+	if f != nil {
+		return nil, fmt.Errorf("%w: the last one does not parse: %s", ErrStoredCheckpointMismatch, f.Note)
+	}
+	if signedBy(last[split+2:], l.signer.Name(), l.signer.KeyHash()) {
+		again, err := note.Sign(text, l.signer)
+		if err != nil {
+			return nil, fmt.Errorf("tally: signing the last stored checkpoint's text again: %w", err)
+		}
+		if !bytes.Equal(again, last) {
+			return nil, fmt.Errorf("%w: its signature under this log's key is not this key's", ErrStoredCheckpointMismatch)
+		}
+	}
+	return &body, nil
+}
+
+// signedBy reports whether sigs, a note's signature lines (SPEC §5.1),
+// include one by the key named name with id keyHash.
+func signedBy(sigs []byte, name string, keyHash uint32) bool {
+	for _, line := range strings.Split(strings.TrimSuffix(string(sigs), "\n"), "\n") {
+		rest, ok := strings.CutPrefix(line, "\u2014 ")
+		if !ok {
+			continue
+		}
+		lineName, b64, ok := strings.Cut(rest, " ")
+		if !ok || lineName != name {
+			continue
+		}
+		raw, err := base64.StdEncoding.DecodeString(b64)
+		if err == nil && len(raw) >= 4 && binary.BigEndian.Uint32(raw[:4]) == keyHash {
+			return true
+		}
+	}
+	return false
 }
 
 // CheckpointSize returns the size line of a checkpoint (SPEC §5.2) **without

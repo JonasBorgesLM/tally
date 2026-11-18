@@ -76,7 +76,14 @@ func TestT04Reorder(t *testing.T) {
 // chain and checkpoints it signs itself. The anchor's checkpoint over the
 // original disagrees: a fork; its own checkpoints are under an unknown key.
 //
-// Seen failing with the anchor's checkpoints not compared with the log.
+// The limit (audit A-01, #126): records are not signed, so the host can
+// instead rewrite them and delete the checkpoints after the point it rewrote
+// from. Nothing local contradicts the rewrite; the honest writer, reopened,
+// signs its next checkpoint over it with the real key, and without an anchor
+// the log verifies fully attested.
+//
+// The fork was seen failing with the anchor's checkpoints not compared with
+// the log.
 func TestT06RewriteWithoutTheKey(t *testing.T) {
 	orig := writeLog(t, tallytest.TestSignerKey, 0x52, ids(5, "e"), 2)
 	rewritten := writeLog(t, attackerKey(t), 0x52, append(ids(2, "e"), "x2", "x3", "x4"), 2)
@@ -86,6 +93,45 @@ func TestT06RewriteWithoutTheKey(t *testing.T) {
 	rep := verify(t, rewritten, tally.WithAnchor(anchorList(orig.cps)))
 	detected(t, rep, tally.ForkDetected)
 	detected(t, rep, tally.UnknownKey)
+
+	// The limit: the rewritten records, the original's checkpoints up to the
+	// one at size 3 (before the rewrite's first entry, seq 3), and the honest
+	// writer reopening it.
+	ctx := context.Background()
+	mem := tallytest.NewMemStore()
+	recs := make([]tally.Record, 0, len(rewritten.bodies))
+	for i, b := range rewritten.bodies {
+		recs = append(recs, tally.Record{Seq: uint64(i), Body: b}) // #nosec G115 -- a slice index
+	}
+	if err := mem.AppendBatch(ctx, recs); err != nil {
+		t.Fatal(err)
+	}
+	if err := mem.PutCheckpoint(ctx, orig.cps[0]); err != nil { // size 3, below the rewrite
+		t.Fatal(err)
+	}
+	l, err := tally.Open(ctx, keepOpen{mem}, signer(t, tallytest.TestSignerKey))
+	if err != nil {
+		t.Fatalf("the honest writer refused the rewrite: the limit asserted here no longer holds (%v)", err)
+	}
+	if err = l.Close(); err != nil { // signs the rewritten history
+		t.Fatal(err)
+	}
+	resigned := &source{}
+	for r, err := range mem.Records(ctx, 0) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		resigned.bodies = append(resigned.bodies, r.Body)
+	}
+	for cp, err := range mem.Checkpoints(ctx) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		resigned.cps = append(resigned.cps, cp)
+	}
+	undetected(t, verify(t, resigned, tally.WithRequireFullyAttested()))
+	// Against the anchor, it is still a fork.
+	detected(t, verify(t, resigned, tally.WithAnchor(anchorList(orig.cps))), tally.ForkDetected)
 }
 
 // T-09: split view. A host holding the key shows one auditor one history and

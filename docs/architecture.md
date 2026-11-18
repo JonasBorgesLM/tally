@@ -292,7 +292,9 @@ honest restart look like a rollback.
 2. Validate every segment's header, and every frame of the last segment.
 3. Classify the tail per SPEC §3.3. **Write quarantine durably before truncating** (RF-20). Refuse if it would cut
    below the last local checkpoint, or on a bad middle.
-4. Check the tail's chain against the last local checkpoint.
+4. Reread the chain and compare the leaf at the last stored checkpoint's size with its head, and that checkpoint's
+   signature, when it names the signer's key, with the signer's own (`tally.Open`, `ErrStoredCheckpointMismatch`).
+   A mismatch refuses the open. A rewrite whose later checkpoints were deleted passes: only an anchor shows it (T-06).
 5. Rebuild the idempotency window.
 
 ### Verify
