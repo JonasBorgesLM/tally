@@ -10,6 +10,9 @@ The release workflow will refuse to publish a tag with no section here.
 
 ### Added
 
+- README, "End to end": usher's one-command demo of the log, an anchor that pulls off the host, and a rollback the
+  host's own spool accepts and the anchor detects (#55). The anchor there shares the machine; a second one is not
+  yet run.
 - README, "Mirroring to crier", and `Example_mirrorToCrier`: mirror only what `Append` confirmed, with no
   payload, and a lost mirror event loses no audit record (RI-03).
 - `tally.NewSigner`, which loads the signer key `tally keygen` writes, so a consumer needs no `golang.org/x/mod`
