@@ -300,6 +300,11 @@ func (r segmentRead) run(ctx context.Context, yield func(tally.Record, error) bo
 		if err != nil {
 			return fail(fmt.Errorf("filestore: %s at offset %d: %w", name, off, err))
 		}
+		if seq == h.first {
+			if err := headerNamesItsFirst(name, h, body); err != nil {
+				return fail(err)
+			}
+		}
 		last = tally.LeafHash(body)
 		off += int64(frameOverhead + len(body))
 		if seq >= r.from && !yield(tally.Record{Seq: seq, Body: body}, nil) {
@@ -307,6 +312,31 @@ func (r segmentRead) run(ctx context.Context, yield func(tally.Record, error) bo
 		}
 		seq++
 	}
+}
+
+// headerNamesItsFirst checks a segment header against the segment's first
+// record (SPEC §3.1, audit A-03, #128): the header's log_id is the record's,
+// and its prev_hash is all zero before a genesis and the entry's own prev_hash
+// otherwise. Without it a header could name another log, or a predecessor its
+// first entry does not chain to, and verify, since nothing else reads those
+// fields of the first segment read. A record that does not decode is left to
+// the verifier, which reports it at its own leaf.
+func headerNamesItsFirst(name string, h header, body []byte) error {
+	v, err := tally.DecodeRecord(body)
+	if err != nil {
+		return nil //nolint:nilerr // not this check's violation: the verifier reports the record at its own leaf
+	}
+	if v.LogID != h.logID {
+		return fmt.Errorf("filestore: %s: %w: the header's log_id is not its first record's", name, errBadHeader)
+	}
+	want := v.PrevHash
+	if v.Genesis {
+		want = [32]byte{}
+	}
+	if h.prev != want {
+		return fmt.Errorf("filestore: %s: %w: the header's prev_hash is not its first record's predecessor", name, errBadHeader)
+	}
+	return nil
 }
 
 // readCheckpoints yields the checkpoints in dir's checkpoints file, reading

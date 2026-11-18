@@ -184,7 +184,7 @@ as the log exists:
 | `outcome` | in clear | Success, failure, denied or error. |
 | `subject_ref` | in clear | Whose sealed payload this is. |
 | plain payload | in clear | Never personal data; seal it instead. |
-| sealed payload | encrypted | The details: an IP, a user agent, an email, a reason. A shred makes it unreadable. |
+| sealed payload | encrypted | The details: an IP, a user agent, an email, a reason. A shred makes it unreadable. **Its length is in clear**: the plaintext's, plus 29 bytes. A length can identify, and it survives the shred. |
 
 **What a shred does not do.** tally provides a mechanism. It does not make a deployment conform to the LGPD
 or any other law: that depends on the operator's process and must be validated with legal counsel.

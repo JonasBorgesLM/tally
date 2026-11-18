@@ -248,7 +248,9 @@ are worth; an anchor (§7 input) is what makes one trustworthy.
 
 A writer that prunes (RF-14, ADR-0012) removes only leading segments whose every record is below the
 `size` of a checkpoint that verifies, that is, segments followed by one whose `first_seq` is at most
-that `size`. It never removes the last segment, so the segment holding record `size - 1` stays.
+that `size`. It never removes the last segment, and the log still starts at or below `size`. When `size` is a
+segment boundary, the segment holding record `size - 1` is removed too, and the next segment's header `prev_hash`,
+which is the checkpoint's `head`, is what §7 step 5 matches.
 
 **(writer)** Before removing any segment, the writer stores that checkpoint's signed note (§5.1), as
 its exact bytes, in `pruned.tlc`, written atomically: a temporary file, fsync, rename, directory
@@ -472,7 +474,11 @@ accepted checkpoints naming more than one `origin` (step 3).
    the name (§3), then `log_id`, `first_seq` and `prev_hash`. For every segment after the first one read,
    `log_id` equals the log's, `first_seq` is one more than the previous segment's last `seq`, and `prev_hash`
    equals the previous leaf hash. In every segment the header stands in for the previous record: the first
-   frame's `seq` MUST equal `first_seq` and, for an entry, its `prev_hash` MUST equal the header's. For each
+   frame's `seq` MUST equal `first_seq`, its `log_id` MUST equal the header's, and, for an entry, its
+   `prev_hash` MUST equal the header's; before a genesis, the header's `prev_hash` MUST be all zero. These
+   checks apply to the first segment read as much as to the others. A source with no record at or after where
+   reading starts is `TruncatedBelowCheckpoint` when an accepted checkpoint covers any leaf, and otherwise
+   not a log at all: an error, since there is nothing to verify. For each
    frame, in this order: check the length limit, read the body, check the CRC, decode strictly (§1 rules 1
    to 4, in order), and apply the validity rules of §2 in their listed order.
 
@@ -506,7 +512,9 @@ accepted checkpoints naming more than one `origin` (step 3).
    checkpoint, which is signed, rather than on a file the host wrote.
 8. **Heartbeat.** If `T` is given, take the accepted anchor checkpoints in step 6's order. A gap between
    consecutive `recorded_at` values, or between the last one and the current time, above `T + tolerance` is
-   `HeartbeatGap`, unless the earlier checkpoint's `state` is `closed`. Times are compared as instants. With
+   `HeartbeatGap`, unless the earlier checkpoint's `state` is `closed`. An accepted anchor checkpoint whose
+   `recorded_at` is later than the current time plus `tolerance` is `HeartbeatGap` too: a time after now cannot
+   be judged against it, and would hide every gap behind it. Times are compared as instants. With
    `T` given and no accepted anchor checkpoint, the gap is unbounded: `HeartbeatGap`. These times are the
    signer's own claims (ADR-0006).
 9. **Result.** `AttestedSize` is the largest `size` among matched checkpoints, or 0 if none matched. It never

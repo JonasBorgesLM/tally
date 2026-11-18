@@ -187,3 +187,48 @@ func TestAReaderNeverWrites(t *testing.T) {
 		t.Error("reading changed the directory")
 	}
 }
+
+// A segment header names its first record: its log_id is the record's, and its
+// prev_hash is all zero before a genesis (SPEC §3.1). Otherwise a reader
+// reports the segment malformed, and Verify a violation, rather than accept
+// a header nothing else reads (audit A-03, #128).
+//
+// Seen failing with the headerNamesItsFirst call removed: both verified OK.
+func TestAHeaderNamesItsFirstRecord(t *testing.T) {
+	cases := map[string]func(b []byte){
+		"another log_id":      func(b []byte) { b[9] ^= 0xFF },
+		"a nonzero prev_hash": func(b []byte) { b[33] = 0xAA },
+	}
+	ran := 0
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			ran++
+			dir, _ := fiveRecords(t)
+			seg := filepath.Join(dir, segmentName(0))
+			b, err := os.ReadFile(seg) // #nosec G304 -- a test's own file
+			if err != nil {
+				t.Fatal(err)
+			}
+			mutate(b)
+			writeFile(t, seg, b)
+			r, err := OpenReader(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rep, err := tally.Verify(t.Context(), r, verifiers(t))
+			if err != nil {
+				t.Fatalf("Verify = %v, want a report", err)
+			}
+			found := false
+			for _, f := range rep.Failures {
+				found = found || f.Kind == tally.MalformedRecord
+			}
+			if rep.OK() || !found {
+				t.Fatalf("a header that does not name its first record: %+v, want MalformedRecord", rep)
+			}
+		})
+	}
+	if ran != len(cases) {
+		t.Fatalf("ran %d cases, want %d", ran, len(cases))
+	}
+}

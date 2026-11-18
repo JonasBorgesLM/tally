@@ -169,7 +169,7 @@ crash can leave, are debris and not frames: a frame of length 0 is not one (SPEC
 ### T-20 — Link old entries to a person after a shred
 **Actor:** anyone holding the log. **Impact:** erasure undone in practice.
 **Mitigation:** RS-14, RS-18, RF-11, RF-12: random ref, mapping destroyed in the shred.
-**Residual:** **partial.** The ref still links that subject's entries to each other, so timing and pattern may re-identify. `resource` and `event_id` are free of people only as far as RS-18's charset reaches. An older vault backup restores the mapping. Deleting on SSD or a journaling filesystem does not destroy, so a recovered wrapped DEK plus a later KEK leak reopens the payload. Conformance needs legal counsel.
+**Residual:** **partial.** The ref still links that subject's entries to each other, so timing and pattern may re-identify. `resource` and `event_id` are free of people only as far as RS-18's charset reaches. An older vault backup restores the mapping. Deleting on SSD or a journaling filesystem does not destroy, so a recovered wrapped DEK plus a later KEK leak reopens the payload. A sealed payload's length is the plaintext's plus 29 bytes, with no padding, and survives the shred: a length can itself identify, an email's or a short reason code's (audit A-07, #128; accepted, padding to buckets is a later option). Conformance needs legal counsel.
 
 ### T-21 — Rewrite the anchor from the host
 **Actor:** host attacker. **Impact:** T-05, T-07, T-08 and T-15 all stop being detectable, and everything still looks healthy.
