@@ -1,0 +1,274 @@
+# Release (ADR-0014, #57).
+#
+# tally ships two things. The module is the tag, which proxy.golang.org serves
+# to `go get`. The `tally` binary is what an auditor runs to be told a log is
+# intact, so it is the auditor's root of trust (T-18): a tampered one says
+# intact to anything. This workflow refuses to publish what cannot be
+# consumed, verified, reproduced or attributed, and checks everything that can
+# fail BEFORE the GitHub release exists, since a tag is immutable once anyone
+# has fetched it.
+#
+# - verify: the tag's refusals (.github/scripts/check-release-tag.sh, whose
+#   every refusal is seen failing by test-check-release-tag.sh in CI), then
+#   the module built and tested as a consumer resolves it, and the API diff.
+# - build: the binaries, built twice, on two runners, from two checkouts.
+# - reproducible: the two builds compared byte for byte; any difference stops
+#   the release. An auditor can rebuild the same way and compare.
+# - release: SBOM, source tarball, checksums, build provenance, notes, and the
+#   GitHub release.
+#
+# Adapted from vane's release.yml. Not yet watched succeeding: v0.1.0-rc.1
+# (#58) is its first real run. RELEASING.md says what to do if it fails half
+# way.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  GO_VERSION: "1.26"
+  # The exact toolchain the binaries are built with. It is an input to their
+  # bytes: a rebuild with another version differs. The notes name it.
+  GO_RELEASE_VERSION: "1.27.4"
+  GOVULNCHECK_VERSION: "v1.7.0"
+  GORELEASE_VERSION: "v0.0.0-20260824195058-e88cd73687aa"
+  CYCLONEDX_GOMOD_VERSION: "v1.12.0"
+  GOFLAGS: -mod=readonly
+  GOSUMDB: sum.golang.org
+
+jobs:
+  verify:
+    name: Verify the tag and the module
+    runs-on: ubuntu-latest
+    outputs:
+      prerelease: ${{ steps.tag.outputs.prerelease }}
+    steps:
+      # Full history and tags: the checks compare against main and earlier tags.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: go.mod
+
+      - name: The tag may be released
+        id: tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          git fetch --no-tags origin main
+          ./.github/scripts/check-release-tag.sh "$TAG" origin/main
+
+      - name: Build, vet, test as a consumer resolves it
+        run: |
+          go mod verify
+          go build ./...
+          go vet ./...
+          go test -race ./...
+      - name: interop
+        working-directory: interop
+        run: go test -race ./...
+
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@${{ env.GOVULNCHECK_VERSION }}
+          govulncheck ./...
+
+      - name: Boundaries and documentation still hold
+        run: |
+          ./.github/scripts/check-boundaries.sh
+          ./.github/scripts/check-docs.sh
+
+      # Generated, not written from memory. -base is explicit: left to infer,
+      # gorelease asks the proxy, which may already serve this tag.
+      - name: Generate API diff
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          base=$(git -c versionsort.suffix=-rc. tag --list 'v*' --sort=-v:refname | grep -vxF "$TAG" | grep -vE -- '-rc\.' | head -1)
+          base="${base:-none}"
+          go install golang.org/x/exp/cmd/gorelease@${{ env.GORELEASE_VERSION }}
+          set +e
+          gorelease -base="$base" > "$RUNNER_TEMP/apidiff.txt" 2>&1
+          status=$?
+          set -e
+          cat "$RUNNER_TEMP/apidiff.txt"
+          if [ "$status" -ne 0 ]; then
+            # The one tolerated refusal: gorelease cannot suggest a version
+            # (a first release, or the proxy already sees this tag).
+            if grep -q "^Can only suggest a release version when compared against the most recent version of this major:" "$RUNNER_TEMP/apidiff.txt"; then
+              echo "::warning::gorelease could not suggest a version; proceeding with the diff it produced"
+            else
+              echo "::error::gorelease exited $status comparing against $base"
+              exit "$status"
+            fi
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: apidiff
+          path: ${{ runner.temp }}/apidiff.txt
+          if-no-files-found: error
+
+  build:
+    name: Build the binaries (${{ matrix.copy }})
+    needs: verify
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # Two independent builds: separate runners, checkouts and caches.
+        copy: [a, b]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: src-${{ matrix.copy }}
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_RELEASE_VERSION }}
+          cache: false # a cache would be one more thing the two builds share
+      - name: ./.github/scripts/build-release.sh
+        working-directory: src-${{ matrix.copy }}
+        env:
+          TAG: ${{ github.ref_name }}
+        run: ./.github/scripts/build-release.sh "$RUNNER_TEMP/dist" "$TAG"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist-${{ matrix.copy }}
+          path: ${{ runner.temp }}/dist/
+          if-no-files-found: error
+
+  reproducible:
+    name: The two builds are byte-identical
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: ${{ runner.temp }}/builds
+      - name: Compare
+        working-directory: ${{ runner.temp }}/builds
+        run: |
+          (cd dist-a && sha256sum ./*) > a.sum
+          (cd dist-b && sha256sum ./*) > b.sum
+          cat a.sum
+          if [ "$(wc -l < a.sum)" -ne 4 ]; then
+            echo "::error::expected 4 binaries, found $(wc -l < a.sum)"
+            exit 1
+          fi
+          if ! diff a.sum b.sum; then
+            echo "::error::two builds of one tag differ; nothing is released"
+            exit 1
+          fi
+          echo "the two builds are byte-identical"
+
+  release:
+    name: Publish the release
+    needs: [verify, reproducible]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      # Scoped to this job only, after verify and the reproducibility check.
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_RELEASE_VERSION }}
+          cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: ${{ runner.temp }}/artifacts
+
+      - name: Assemble the files
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          dist="$RUNNER_TEMP/dist"
+          mkdir -p "$dist"
+          cp "$RUNNER_TEMP"/artifacts/dist-a/* "$dist/"
+          # Uncompressed: no gzip header metadata between this file and a
+          # consumer's own `git archive` of the tag.
+          git archive --format=tar --prefix="tally-${TAG}/" --output="$dist/tally-${TAG}.tar" "$TAG"
+
+      - name: SBOM of the tally binary
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@${{ env.CYCLONEDX_GOMOD_VERSION }}
+          cyclonedx-gomod app -json -licenses=false -main cmd/tally \
+            -output "$RUNNER_TEMP/dist/tally_${TAG}.cdx.json" .
+
+      - name: Checksums
+        working-directory: ${{ runner.temp }}/dist
+        run: sha256sum ./* | tee SHA256SUMS
+
+      # Signed by Sigstore with this workflow's identity: these exact files, by
+      # digest, came from this workflow at this commit, after verify and the
+      # reproducibility check passed. Covers SHA256SUMS and the SBOM too.
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/dist/*
+
+      - name: Assemble release notes
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          diff_file=$(find "$RUNNER_TEMP/artifacts" -type f -name apidiff.txt -print -quit)
+          if [ ! -s "$diff_file" ]; then
+            echo "::error::apidiff.txt missing or empty; the artifact upload must have failed"
+            exit 1
+          fi
+          version="${TAG#v}"
+          version="${version%%-rc.*}"
+          notes="$RUNNER_TEMP/notes.md"
+          {
+            awk -v h="## [$version]" 'index($0, h) == 1 {on=1; next} /^## \[/ {on=0} on' CHANGELOG.md
+            printf '\n### API changes (generated)\n\n```\n'
+            cat "$diff_file"
+            printf '```\n\n### Verifying this release\n\n'
+            printf 'The binaries were built twice, on two runners, and were byte-identical. '
+            printf 'Built with Go %s; module floor Go %s.\n\n' "$GO_RELEASE_VERSION" "$GO_VERSION"
+            printf '```bash\n'
+            printf 'sha256sum -c SHA256SUMS --ignore-missing\n'
+            printf 'gh attestation verify <file> --repo %s\n' "$GITHUB_REPOSITORY"
+            printf '# Or rebuild and compare: from a checkout of %s, with Go %s,\n' "$TAG" "$GO_RELEASE_VERSION"
+            printf './.github/scripts/build-release.sh ./rebuilt %s && sha256sum ./rebuilt/*\n' "$TAG"
+            printf '```\n'
+          } > "$notes"
+          cat "$notes"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          PRERELEASE: ${{ needs.verify.outputs.prerelease }}
+        run: |
+          flags=()
+          [ "$PRERELEASE" = "true" ] && flags+=(--prerelease)
+          gh release create "$TAG" "$RUNNER_TEMP"/dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "tally $TAG" \
+            --notes-file "$RUNNER_TEMP/notes.md" \
+            --verify-tag "${flags[@]}"
+
+      # pkg.go.dev learns of a version when the proxy first serves it.
+      - name: Announce the version to proxy.golang.org
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          mod=$(go list -m)
+          cd "$(mktemp -d)"
+          go mod init probe.local >/dev/null 2>&1
+          GOPROXY=https://proxy.golang.org GOFLAGS='' go list -m "${mod}@${TAG}"

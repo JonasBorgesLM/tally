@@ -1,0 +1,99 @@
+{
+  "comment": "tally SPEC v1 record vectors. See README.md in this directory. Do not edit by hand.",
+  "records": [
+    {
+      "name": "genesis",
+      "genesis": {
+        "log_id_hex": "000102030405060708090a0b0c0d0e0f",
+        "created_at": "72623859790382856",
+        "origin": "example.com/log"
+      },
+      "body_hex": "0101000102030405060708090a0b0c0d0e0f000000000000000001020304050607080000000f6578616d706c652e636f6d2f6c6f67",
+      "leaf_hash_hex": "90453ef98d93b3ed97096aee5e6363dadbffb8d8c8899e44686e2ce5a9c6830f"
+    },
+    {
+      "name": "entry-system-none-success",
+      "entry": {
+        "log_id_hex": "000102030405060708090a0b0c0d0e0f",
+        "seq": "1",
+        "recorded_at": "72623859790382866",
+        "occurred_at": "72623859790382848",
+        "event_id_hex": "6531",
+        "actor_kind": 3,
+        "actor_id_hex": "",
+        "action": "user.login",
+        "resource": "",
+        "outcome": 1,
+        "payload_kind": 0,
+        "subject_ref_hex": "",
+        "payload_hex": "",
+        "prev_hash_hex": "90453ef98d93b3ed97096aee5e6363dadbffb8d8c8899e44686e2ce5a9c6830f"
+      },
+      "body_hex": "0102000102030405060708090a0b0c0d0e0f00000000000000010102030405060712010203040506070000000002653103000000000000000a757365722e6c6f67696e000000000100000000000000000090453ef98d93b3ed97096aee5e6363dadbffb8d8c8899e44686e2ce5a9c6830f",
+      "leaf_hash_hex": "74930cb3381e9ba81f0bcb08ad1893c0d8d2d64991e74108083164164fe44199"
+    },
+    {
+      "name": "entry-subject-sealed-denied",
+      "entry": {
+        "log_id_hex": "000102030405060708090a0b0c0d0e0f",
+        "seq": "2",
+        "recorded_at": "72623859790382876",
+        "occurred_at": "72623859790382848",
+        "event_id_hex": "30314a395a334b3856375157",
+        "actor_kind": 1,
+        "actor_id_hex": "5e1f0a9c3371420de8156b2790c408b1",
+        "action": "account.password.change",
+        "resource": "account/7f3a",
+        "outcome": 3,
+        "payload_kind": 2,
+        "subject_ref_hex": "5e1f0a9c3371420de8156b2790c408b1",
+        "payload_hex": "01000102030405060708090a0b5d41402abc4b2a76b9719d911017c5927f2c1a0e9d8b6a5c4e3f2d1c0b0a0908",
+        "prev_hash_hex": "74930cb3381e9ba81f0bcb08ad1893c0d8d2d64991e74108083164164fe44199"
+      },
+      "body_hex": "0102000102030405060708090a0b0c0d0e0f0000000000000002010203040506071c01020304050607000000000c30314a395a334b385637515701000000105e1f0a9c3371420de8156b2790c408b1000000176163636f756e742e70617373776f72642e6368616e67650000000c6163636f756e742f376633610302000000105e1f0a9c3371420de8156b2790c408b10000002d01000102030405060708090a0b5d41402abc4b2a76b9719d911017c5927f2c1a0e9d8b6a5c4e3f2d1c0b0a090874930cb3381e9ba81f0bcb08ad1893c0d8d2d64991e74108083164164fe44199",
+      "leaf_hash_hex": "8681c08ca6c4c67c38264b3e832cde714e4bbc0dcd8776912f806aef1ee7cd06"
+    },
+    {
+      "name": "entry-service-plain-failure",
+      "entry": {
+        "log_id_hex": "000102030405060708090a0b0c0d0e0f",
+        "seq": "3",
+        "recorded_at": "72623859790382886",
+        "occurred_at": "72623859790382848",
+        "event_id_hex": "8a00ff10",
+        "actor_kind": 2,
+        "actor_id_hex": "62696c6c696e672d617069",
+        "action": "invoice.issue",
+        "resource": "fatura/2026/ação-nº7",
+        "outcome": 2,
+        "payload_kind": 1,
+        "subject_ref_hex": "",
+        "payload_hex": "7b22616d6f756e745f63656e7473223a31323334352c22726561736f6e223a22636172645f6465636c696e6564227d",
+        "prev_hash_hex": "8681c08ca6c4c67c38264b3e832cde714e4bbc0dcd8776912f806aef1ee7cd06"
+      },
+      "body_hex": "0102000102030405060708090a0b0c0d0e0f000000000000000301020304050607260102030405060700000000048a00ff10020000000b62696c6c696e672d6170690000000d696e766f6963652e6973737565000000176661747572612f323032362f61c3a7c3a36f2d6ec2ba370201000000000000002f7b22616d6f756e745f63656e7473223a31323334352c22726561736f6e223a22636172645f6465636c696e6564227d8681c08ca6c4c67c38264b3e832cde714e4bbc0dcd8776912f806aef1ee7cd06",
+      "leaf_hash_hex": "18685ea29b7a54cc0a066e1ffcd7e43172c908a7eb013d60fca345a13e6acb21"
+    },
+    {
+      "name": "entry-service-none-error",
+      "entry": {
+        "log_id_hex": "000102030405060708090a0b0c0d0e0f",
+        "seq": "4",
+        "recorded_at": "72623859790382896",
+        "occurred_at": "-1",
+        "event_id_hex": "6534",
+        "actor_kind": 2,
+        "actor_id_hex": "7363686564756c6572",
+        "action": "retention.prune_check",
+        "resource": "",
+        "outcome": 4,
+        "payload_kind": 0,
+        "subject_ref_hex": "",
+        "payload_hex": "",
+        "prev_hash_hex": "18685ea29b7a54cc0a066e1ffcd7e43172c908a7eb013d60fca345a13e6acb21"
+      },
+      "body_hex": "0102000102030405060708090a0b0c0d0e0f00000000000000040102030405060730ffffffffffffffff00000002653402000000097363686564756c657200000015726574656e74696f6e2e7072756e655f636865636b000000000400000000000000000018685ea29b7a54cc0a066e1ffcd7e43172c908a7eb013d60fca345a13e6acb21",
+      "leaf_hash_hex": "ad6c61a5eb15cbe9cbea4780baee32ebd6e201011902fea30dd7b628692faa89"
+    }
+  ]
+}

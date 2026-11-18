@@ -1,0 +1,82 @@
+package tally
+
+import "time"
+
+// Observer receives the log's health signals (RF-16), for metrics and alerts,
+// with no dependency on any metrics library.
+//
+// Its methods are never called concurrently. They are called from the writer
+// goroutine, the one that orders and stores every entry (ADR-0008), except
+// AnchorPublish for a failed publication, which comes from that anchor's
+// goroutine (RF-07). They must not block: a slow Observer stalls every Append.
+// Hand the value to a channel or an atomic counter and return.
+//
+// No method receives a payload or any part of an entry, by the shape of its
+// types: every parameter is a count, a duration or an error, and the errors are
+// the store's or the anchor's, never an event's.
+//
+// A method that panics is recovered: that one event is dropped, the Observer
+// is still called for later ones, and Log.ObserverPanics counts it
+// (ADR-0017). The counter is the only trace, since tally has no logger.
+//
+// Events not yet emitted are marked with the issue that adds them.
+type Observer interface {
+	// Batch reports a batch of n entries made durable, and how long the
+	// store took to do it, fsync included.
+	Batch(n int, syncLatency time.Duration)
+	// AnchorPublish reports a failed publication to an anchor, and how many
+	// checkpoints that anchor's bounded queue has dropped so far (RF-07,
+	// RF-19). A drop is reported too, with ErrAnchorQueueFull.
+	AnchorPublish(err error, dropped uint64)
+	// DiskSpace reports free space below the configured threshold (RNF-10;
+	// #37).
+	DiskSpace(free uint64)
+	// ClockRegression reports a Clock reading earlier than the last
+	// recorded_at, and by how much; the entry was recorded with the last value
+	// instead (RF-03, ADR-0007). It repeats for every entry until the clock
+	// catches up.
+	ClockRegression(by time.Duration)
+	// Poisoned reports, once, the store error that poisoned the log. Every
+	// later Append fails with ErrPoisoned; close the Log, and reopen it after a
+	// restart (ADR-0009).
+	Poisoned(err error)
+	// Recovered reports bytes quarantined while opening (RF-20; #34).
+	Recovered(quarantinedBytes int64)
+}
+
+// WithObserver sets the Observer. nil means none.
+func WithObserver(o Observer) Option {
+	return func(c *config) { c.observer = o }
+}
+
+// ObserverPanics returns how many Observer calls have panicked (ADR-0017). A
+// panic loses that one event and changes nothing else; this counter is how a
+// caller learns that its observer is broken.
+func (l *Log) ObserverPanics() uint64 { return l.observerPanics.Load() }
+
+// observe calls f with the Observer, if there is one, and recovers a panic.
+func (l *Log) observe(f func(Observer)) {
+	if l.cfg.observer == nil {
+		return
+	}
+	l.observerMu.Lock()
+	defer l.observerMu.Unlock()
+	defer func() {
+		if recover() != nil {
+			l.observerPanics.Add(1)
+		}
+	}()
+	f(l.cfg.observer)
+}
+
+// checkSpace reports through the Observer when the Store says its free space
+// is below its threshold (RNF-10). Only the writer calls it.
+func (l *Log) checkSpace() {
+	r, ok := l.store.(SpaceReporter)
+	if !ok || l.cfg.observer == nil {
+		return
+	}
+	if free, low := r.LowSpace(); low {
+		l.observe(func(o Observer) { o.DiskSpace(free) })
+	}
+}

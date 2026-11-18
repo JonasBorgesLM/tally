@@ -1,0 +1,22 @@
+# SSH keys allowed to sign release tags, checked by the `release` job in
+# .github/workflows/release.yml.
+#
+# To add another key, from the machine that will cut tags:
+#
+#   ssh-add -L                      # or: cat ~/.ssh/id_ed25519.pub
+#
+# then add one line per key, in the format git expects:
+#
+#   <email> namespaces="git" ssh-ed25519 AAAA...
+#
+# and configure git to sign tags with it (locally, per repository -- a global
+# gpgsign default silently signs every tag in every repo on the machine,
+# including ones that never asked for it):
+#
+#   git config gpg.format ssh
+#   git config user.signingkey ~/.ssh/id_ed25519.pub
+#   git config tag.gpgsign true
+#
+# See RELEASING.md, "Cutting a release".
+
+jonasleo92@yahoo.com.br namespaces="git" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAoMtarMawZsFsEu/l5bi9M2zVYoGWEfzVAhk5TkXIN1
