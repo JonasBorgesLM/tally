@@ -9,11 +9,11 @@ and `Anchor` could only write, though `Verify` has to read it.
 ```
 cmd/tally ──▶ tally, filestore, anchor
 filestore, anchor, seal, tallytest ──▶ tally ──▶ internal/wire, internal/note
-filestore ──▶ internal/fsx
+filestore ──▶ internal/fsx, internal/merkle
 seal ──▶ internal/fsx, internal/wire
 ```
 
-`tally` (the root) imports no subpackage. `internal/wire`, `internal/note` and `internal/fsx`
+`tally` (the root) imports no subpackage. `internal/wire`, `internal/note`, `internal/fsx` and `internal/merkle`
 import no tally package. Nothing outside `*_test.go` imports `tallytest`. The whole module is
 stdlib only; `interop/` has its own `go.mod` and only tests. `check-boundaries.sh` asserts all of
 this against the resolver, once each package exists.
@@ -28,6 +28,7 @@ tally/                  module github.com/JonasBorgesLM/tally (stdlib only, RNF-
 ├── internal/wire/      strict encoding
 ├── internal/note/      minimal signed-note (Ed25519)
 ├── internal/fsx/       fsync of file and directory, flock, atomic write, injectable filesystem
+├── internal/merkle/    the RFC 6962 tree, inclusion and consistency proofs, compact ranges
 ├── cmd/tally/          CLI (flag, no cobra)
 ├── docs/, testdata/vectors/
 └── interop/            own go.mod: differential tests against golang.org/x/mod/sumdb/note

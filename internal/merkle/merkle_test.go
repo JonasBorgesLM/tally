@@ -177,3 +177,112 @@ func TestConsistencyProofs(t *testing.T) {
 }
 
 func clone(p [][32]byte) [][32]byte { return append([][32]byte(nil), p...) }
+
+// A tree that keeps only the compact range below start gives the same root,
+// inclusion and consistency proofs as the whole tree, for every size, leaf and
+// old size at or above start, and ErrPruned below it. Every start up to maxN,
+// with every size above it (#59).
+//
+// Negative control: with prefixNode never matching, so that the range is not
+// used, every pruned tree's root failed with ErrPruned. Verified by hand,
+// restored before committing.
+func TestPrunedTreeAgreesWithTheWhole(t *testing.T) {
+	all := leavesN(maxN)
+	whole, err := NewTree(0, nil, all)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ran := 0
+	for start := uint64(0); start <= maxN; start++ {
+		prefix, err := whole.CompactRange(start)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pr, err := NewTree(start, prefix, all[start:])
+		if err != nil {
+			t.Fatalf("start %d: %v", start, err)
+		}
+		for n := max(start, 1); n <= maxN; n++ {
+			ran++
+			want, _ := whole.Root(n)
+			if got, err := pr.Root(n); err != nil || got != want {
+				t.Fatalf("start %d: root of %d = %x, %v; want %x", start, n, got, err, want)
+			}
+			for i := range n {
+				got, err := pr.InclusionProof(i, n)
+				if i < start {
+					if !errors.Is(err, ErrPruned) {
+						t.Fatalf("start %d: inclusion of pruned leaf %d: %v, want ErrPruned", start, i, err)
+					}
+					continue
+				}
+				w, _ := whole.InclusionProof(i, n)
+				if err != nil || !equal(got, w) {
+					t.Fatalf("start %d: inclusion of %d in %d differs: %v", start, i, n, err)
+				}
+			}
+			for m := uint64(1); m <= n; m++ {
+				got, err := pr.ConsistencyProof(m, n)
+				if m < start {
+					if !errors.Is(err, ErrPruned) {
+						t.Fatalf("start %d: consistency from pruned size %d: %v, want ErrPruned", start, m, err)
+					}
+					continue
+				}
+				w, _ := whole.ConsistencyProof(m, n)
+				if err != nil || !equal(got, w) {
+					t.Fatalf("start %d: consistency %d -> %d differs: %v", start, m, n, err)
+				}
+			}
+		}
+		if start > 1 {
+			if _, err := pr.Root(start - 1); !errors.Is(err, ErrPruned) {
+				t.Fatalf("start %d: root of a pruned size: %v, want ErrPruned", start, err)
+			}
+		}
+	}
+	if want := maxN + maxN*(maxN+1)/2; ran != want { // start 0: sizes 1..maxN; start s: s..maxN
+		t.Fatalf("checked %d (start, size) pairs, want %d", ran, want)
+	}
+}
+
+// A compact range extends from an earlier one: what a second prune needs,
+// once the leaves below the first are gone.
+func TestCompactRangeExtends(t *testing.T) {
+	all := leavesN(maxN)
+	whole, _ := NewTree(0, nil, all)
+	ran := 0
+	for s1 := uint64(0); s1 <= maxN; s1++ {
+		p1, _ := whole.CompactRange(s1)
+		pr, err := NewTree(s1, p1, all[s1:])
+		if err != nil {
+			t.Fatal(err)
+		}
+		for s2 := s1; s2 <= maxN; s2++ {
+			got, err := pr.CompactRange(s2)
+			want, _ := whole.CompactRange(s2)
+			if err != nil || !equal(got, want) {
+				t.Fatalf("range %d extended to %d: %v", s1, s2, err)
+			}
+			ran++
+		}
+	}
+	if want := (maxN + 1) * (maxN + 2) / 2; ran != want {
+		t.Fatalf("checked %d pairs, want %d", ran, want)
+	}
+	if _, err := NewTree(5, make([][32]byte, 1), nil); err == nil {
+		t.Error("a range of 1 hash below 5 was accepted; 5 needs 2")
+	}
+}
+
+func equal(a, b [][32]byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}

@@ -143,7 +143,8 @@ A log is a directory of segments named `NNNNNNNNNNNNNNNN.tlog`: the first `seq` 
 exactly 16 lowercase hex digits. Segments are contiguous and ordered by that number.
 
 - A verifier reads only files whose names match that pattern exactly. Other files in the directory
-  (the checkpoints file of §3.4, the lock file, quarantine files, the prune marker of §3.5) are not segments.
+  (the checkpoints file of §3.4, the lock file, quarantine files, the prune marker of §3.5, the pruned range
+  of §3.6) are not segments.
 - A file whose name matches the pattern except for uppercase hex digits is a violation, not a foreign
   file, so that renaming cannot hide a segment.
 - The name MUST equal the header's `first_seq`.
@@ -252,14 +253,43 @@ that `size`. It never removes the last segment, and the log still starts at or b
 segment boundary, the segment holding record `size - 1` is removed too, and the next segment's header `prev_hash`,
 which is the checkpoint's `head`, is what §7 step 5 matches.
 
-**(writer)** Before removing any segment, the writer stores that checkpoint's signed note (§5.1), as
-its exact bytes, in `pruned.tlc`, written atomically: a temporary file, fsync, rename, directory
+**(writer)** Before removing any segment, the writer stores the pruned range (§3.6), then that
+checkpoint's signed note (§5.1), as its exact bytes, in `pruned.tlc`, written atomically: a temporary file, fsync, rename, directory
 fsync (RS-10). It then removes the segments oldest first and fsyncs the directory, so a crash leaves a
 contiguous segment set starting at a later segment. A later prune replaces the marker. Quarantine files
 and the checkpoints file are never removed.
 
 The marker is for the operator. **A verifier never reads it** (§7 step 7): a host-written file proves
 nothing, and a pruned log verifies only with a trusted checkpoint at or above its first segment.
+
+### 3.6 Pruned range
+
+The leaves of a log form an RFC 6962 Merkle tree (ADR-0002, ADR-0004): leaf `i` is record `i`'s leaf hash
+(§2.3), genesis is leaf 0, and an interior node is `SHA-256(0x01 || left || right)`. Proofs over that tree need
+interior hashes from below the first record a prune kept. The **compact range** below a leaf `s` holds them:
+the root of each maximal aligned subtree of `[0, s)`, one per bit set in `s`, largest first. The subtree for
+bit `b`, after the higher bits' subtrees, covers `2^b` leaves. From it and the leaves from `s` on, a reader
+builds every root of a size at least `s`, the inclusion of every leaf from `s` on, and consistency from every
+size at least `s`. Nothing below `s` is reachable: the inclusion of a pruned leaf, or consistency from a smaller
+size.
+
+**(writer)** A prune that keeps records from `s` on writes the compact range below `s` to `pruned.range`,
+atomically (RS-10), before the marker and before removing any segment. The file is text, LF line endings:
+
+```
+tally pruned range
+<s, in decimal, no sign or leading zero>
+<one hash per line: the 32 bytes in standard base64 with padding, 44 characters>
+```
+
+It holds exactly one hash per bit set in `s`, and nothing after the last newline; a reader refuses anything
+else, and the file is at most 2,920 bytes. A crash during a prune can leave segments below `s`: their leaves are
+already in the range. A range whose `s` is below the first segment stands for leaves that are gone and not in
+it, and is refused. A log a v0.1 writer pruned has no range and has lost the leaves one needs: it is pruned
+further without one, and has no tree below its first segment.
+
+A range is written by the host and proves nothing by itself: a proof built from it is checked against a root a
+trusted checkpoint signs, and a false hash makes the proof fail. **A verifier does not read it.**
 
 ## 4. Sealing
 
@@ -571,7 +601,10 @@ its seed and key id, and a note it signed (§5.1).
 them (§3): segment 0 holding the five records, the checkpoints file, and the header-only segment 5 that
 the writer starts after the checkpoint (§3, ADR-0019), each file as hex. [`seal.json`](../testdata/vectors/seal.json)
 is §4's sealing over a fixed DEK and nonce, for the `log_id`, `event_id` and `subject_ref` of `records.json`'s
-sealed entry: the AAD and the payload, each as hex. Conformance to §5 is tested
+sealed entry: the AAD and the payload, each as hex. [`merkle.json`](../testdata/vectors/merkle.json) is the
+§3.6 tree over the five leaves of `records.json`: every root, every inclusion and consistency proof in the tree of
+five, and the compact range below every start; [`pruned-range.json`](../testdata/vectors/pruned-range.json) is the
+`pruned.range` file for two of those ranges. Both are checked against `golang.org/x/mod/sumdb/tlog`. Conformance to §5 is tested
 against `golang.org/x/mod/sumdb/note` (#30). That package accepts up to 100 signatures and no size limit,
 so the differential test expects tally to reject notes it accepts above §6's limits, and never the
 reverse.

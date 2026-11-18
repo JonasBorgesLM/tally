@@ -2,7 +2,10 @@ package interop
 
 import (
 	"context"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"os"
 	"slices"
 	"testing"
 
@@ -166,5 +169,100 @@ func TestMerkleMatchesXMod(t *testing.T) {
 	}
 	if want := interopN * (interopN + 1) / 2; inclusions != want || consistencies != want {
 		t.Fatalf("checked %d inclusion and %d consistency proofs, want %d of each", inclusions, consistencies, want)
+	}
+}
+
+// testdata/vectors/merkle.json, which internal/merkle writes, checked against
+// x/mod: its roots, its proofs, and its compact ranges, each range hash read
+// as x/mod's stored hash of that aligned subtree.
+func TestMerkleVectorsMatchXMod(t *testing.T) {
+	data, err := os.ReadFile("../testdata/vectors/merkle.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v struct {
+		LeafHashesHex []string `json:"leaf_hashes_hex"`
+		Roots         []struct {
+			Size    int64  `json:"size"`
+			RootHex string `json:"root_hex"`
+		} `json:"roots"`
+		Inclusion []struct {
+			Index, Size int64
+			ProofHex    []string `json:"proof_hex"`
+		} `json:"inclusion"`
+		Consistency []struct {
+			From, To int64
+			ProofHex []string `json:"proof_hex"`
+		} `json:"consistency"`
+		CompactRanges []struct {
+			Start     int64    `json:"start"`
+			HashesHex []string `json:"hashes_hex"`
+		} `json:"compact_ranges"`
+	}
+	if err := json.Unmarshal(data, &v); err != nil {
+		t.Fatal(err)
+	}
+	h := func(s string) tlog.Hash {
+		b, err := hex.DecodeString(s)
+		if err != nil || len(b) != 32 {
+			t.Fatalf("hash %q", s)
+		}
+		return tlog.Hash(b)
+	}
+	hs := func(ss []string) []tlog.Hash {
+		out := make([]tlog.Hash, len(ss))
+		for i, s := range ss {
+			out[i] = h(s)
+		}
+		return out
+	}
+	tr := &tlogTree{}
+	for i, l := range v.LeafHashesHex {
+		tr.add(t, int64(i), h(l))
+	}
+	n := int64(len(v.LeafHashesHex))
+	checked := 0
+	for _, r := range v.Roots {
+		want, err := tlog.TreeHash(r.Size, tr)
+		if err != nil || want != h(r.RootHex) {
+			t.Fatalf("root of %d: %v", r.Size, err)
+		}
+		checked++
+	}
+	for _, p := range v.Inclusion {
+		want, err := tlog.ProveRecord(p.Size, p.Index, tr)
+		if err != nil || !slices.Equal(want, hs(p.ProofHex)) {
+			t.Fatalf("inclusion of %d in %d: %v", p.Index, p.Size, err)
+		}
+		checked++
+	}
+	for _, p := range v.Consistency {
+		want, err := tlog.ProveTree(p.To, p.From, tr)
+		if err != nil || !slices.Equal(want, hs(p.ProofHex)) {
+			t.Fatalf("consistency %d -> %d: %v", p.From, p.To, err)
+		}
+		checked++
+	}
+	for _, c := range v.CompactRanges {
+		var want []tlog.Hash
+		off := int64(0)
+		for b := 62; b >= 0; b-- {
+			if c.Start&(1<<b) == 0 {
+				continue
+			}
+			x, err := tr.ReadHashes([]int64{tlog.StoredHashIndex(b, off>>b)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			want = append(want, x[0])
+			off += 1 << b
+		}
+		if !slices.Equal(want, hs(c.HashesHex)) {
+			t.Fatalf("compact range below %d", c.Start)
+		}
+		checked++
+	}
+	if want := 4 * int(n); checked != want { // n roots, n inclusions, n consistencies, n ranges
+		t.Fatalf("checked %d vector entries, want %d", checked, want)
 	}
 }

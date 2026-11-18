@@ -1,0 +1,152 @@
+{
+  "comment": "tally SPEC v1 Merkle tree (RFC 6962) over the leaves of records.json: every root, every proof in the tree of 5, and the compact range below every start (SPEC §3.6). Hashes are hex. See README.md.",
+  "leaf_hashes_hex": [
+    "90453ef98d93b3ed97096aee5e6363dadbffb8d8c8899e44686e2ce5a9c6830f",
+    "74930cb3381e9ba81f0bcb08ad1893c0d8d2d64991e74108083164164fe44199",
+    "8681c08ca6c4c67c38264b3e832cde714e4bbc0dcd8776912f806aef1ee7cd06",
+    "18685ea29b7a54cc0a066e1ffcd7e43172c908a7eb013d60fca345a13e6acb21",
+    "ad6c61a5eb15cbe9cbea4780baee32ebd6e201011902fea30dd7b628692faa89"
+  ],
+  "roots": [
+    {
+      "size": 1,
+      "root_hex": "90453ef98d93b3ed97096aee5e6363dadbffb8d8c8899e44686e2ce5a9c6830f"
+    },
+    {
+      "size": 2,
+      "root_hex": "522648b4281034e33c0370185906014af8da45754dafa26ca14fb425b9563c18"
+    },
+    {
+      "size": 3,
+      "root_hex": "f447bc860efd844f84f4649b985790f5a87070bce9931a893c590297a6f8850d"
+    },
+    {
+      "size": 4,
+      "root_hex": "9ac09b2dd0c21eec9c64a23ab42bc541b6ed80ba34337d2ef27b5b980624519b"
+    },
+    {
+      "size": 5,
+      "root_hex": "06f4966cdd5fb8bfcaf168215eea762e58e8e085b760b05476a0c4d0b2642ea2"
+    }
+  ],
+  "inclusion": [
+    {
+      "index": 0,
+      "size": 5,
+      "proof_hex": [
+        "74930cb3381e9ba81f0bcb08ad1893c0d8d2d64991e74108083164164fe44199",
+        "261a5a7aefffa7c453f9592d111e97c21fcd73f6571066a4bb6a033b9335f2ea",
+        "ad6c61a5eb15cbe9cbea4780baee32ebd6e201011902fea30dd7b628692faa89"
+      ]
+    },
+    {
+      "index": 1,
+      "size": 5,
+      "proof_hex": [
+        "90453ef98d93b3ed97096aee5e6363dadbffb8d8c8899e44686e2ce5a9c6830f",
+        "261a5a7aefffa7c453f9592d111e97c21fcd73f6571066a4bb6a033b9335f2ea",
+        "ad6c61a5eb15cbe9cbea4780baee32ebd6e201011902fea30dd7b628692faa89"
+      ]
+    },
+    {
+      "index": 2,
+      "size": 5,
+      "proof_hex": [
+        "18685ea29b7a54cc0a066e1ffcd7e43172c908a7eb013d60fca345a13e6acb21",
+        "522648b4281034e33c0370185906014af8da45754dafa26ca14fb425b9563c18",
+        "ad6c61a5eb15cbe9cbea4780baee32ebd6e201011902fea30dd7b628692faa89"
+      ]
+    },
+    {
+      "index": 3,
+      "size": 5,
+      "proof_hex": [
+        "8681c08ca6c4c67c38264b3e832cde714e4bbc0dcd8776912f806aef1ee7cd06",
+        "522648b4281034e33c0370185906014af8da45754dafa26ca14fb425b9563c18",
+        "ad6c61a5eb15cbe9cbea4780baee32ebd6e201011902fea30dd7b628692faa89"
+      ]
+    },
+    {
+      "index": 4,
+      "size": 5,
+      "proof_hex": [
+        "9ac09b2dd0c21eec9c64a23ab42bc541b6ed80ba34337d2ef27b5b980624519b"
+      ]
+    }
+  ],
+  "consistency": [
+    {
+      "from": 1,
+      "to": 5,
+      "proof_hex": [
+        "74930cb3381e9ba81f0bcb08ad1893c0d8d2d64991e74108083164164fe44199",
+        "261a5a7aefffa7c453f9592d111e97c21fcd73f6571066a4bb6a033b9335f2ea",
+        "ad6c61a5eb15cbe9cbea4780baee32ebd6e201011902fea30dd7b628692faa89"
+      ]
+    },
+    {
+      "from": 2,
+      "to": 5,
+      "proof_hex": [
+        "261a5a7aefffa7c453f9592d111e97c21fcd73f6571066a4bb6a033b9335f2ea",
+        "ad6c61a5eb15cbe9cbea4780baee32ebd6e201011902fea30dd7b628692faa89"
+      ]
+    },
+    {
+      "from": 3,
+      "to": 5,
+      "proof_hex": [
+        "8681c08ca6c4c67c38264b3e832cde714e4bbc0dcd8776912f806aef1ee7cd06",
+        "18685ea29b7a54cc0a066e1ffcd7e43172c908a7eb013d60fca345a13e6acb21",
+        "522648b4281034e33c0370185906014af8da45754dafa26ca14fb425b9563c18",
+        "ad6c61a5eb15cbe9cbea4780baee32ebd6e201011902fea30dd7b628692faa89"
+      ]
+    },
+    {
+      "from": 4,
+      "to": 5,
+      "proof_hex": [
+        "ad6c61a5eb15cbe9cbea4780baee32ebd6e201011902fea30dd7b628692faa89"
+      ]
+    },
+    {
+      "from": 5,
+      "to": 5,
+      "proof_hex": []
+    }
+  ],
+  "compact_ranges": [
+    {
+      "start": 1,
+      "hashes_hex": [
+        "90453ef98d93b3ed97096aee5e6363dadbffb8d8c8899e44686e2ce5a9c6830f"
+      ]
+    },
+    {
+      "start": 2,
+      "hashes_hex": [
+        "522648b4281034e33c0370185906014af8da45754dafa26ca14fb425b9563c18"
+      ]
+    },
+    {
+      "start": 3,
+      "hashes_hex": [
+        "522648b4281034e33c0370185906014af8da45754dafa26ca14fb425b9563c18",
+        "8681c08ca6c4c67c38264b3e832cde714e4bbc0dcd8776912f806aef1ee7cd06"
+      ]
+    },
+    {
+      "start": 4,
+      "hashes_hex": [
+        "9ac09b2dd0c21eec9c64a23ab42bc541b6ed80ba34337d2ef27b5b980624519b"
+      ]
+    },
+    {
+      "start": 5,
+      "hashes_hex": [
+        "9ac09b2dd0c21eec9c64a23ab42bc541b6ed80ba34337d2ef27b5b980624519b",
+        "ad6c61a5eb15cbe9cbea4780baee32ebd6e201011902fea30dd7b628692faa89"
+      ]
+    }
+  ]
+}
