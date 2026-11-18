@@ -37,74 +37,223 @@ func NodeHash(left, right [32]byte) [32]byte {
 	return sha256.Sum256(buf[:])
 }
 
-// Root is the tree hash of leaves, RFC 6962's MTH. tally's tree is never empty
-// (genesis is leaf 0), so Root of no leaves is an error rather than RFC 6962's
-// hash of the empty string, which no tally checkpoint can name.
-func Root(leaves [][32]byte) ([32]byte, error) {
-	if len(leaves) == 0 {
-		return [32]byte{}, errors.New("merkle: a tree has at least one leaf")
+// ErrPruned means a proof or root needs leaves below a tree's first retained
+// leaf, which only a compact range stands for: a root of a smaller size, the
+// inclusion of a pruned leaf, or a consistency proof from a size below it.
+var ErrPruned = errors.New("merkle: the leaves it needs were pruned")
+
+// Tree is a tree whose leaves from Start on are known, and whose leaves below
+// Start are known only by their compact range: the root of each maximal
+// aligned subtree of [0, Start), largest first, one per bit set in Start. That
+// is at most 64 hashes, and what a pruned log keeps (#59, ADR-0012). From it,
+// a Tree builds every root of a size at least Start, the inclusion of every
+// leaf from Start on, and consistency from every size at least Start: each
+// needs, below Start, only whole subtrees of the range.
+type Tree struct {
+	start  uint64
+	prefix [][32]byte
+	leaves [][32]byte
+}
+
+// NewTree returns the tree of the leaves from start on, after the compact
+// range prefix of the leaves below start. With start 0, prefix is empty and
+// the tree holds every leaf. The tree must not be empty.
+func NewTree(start uint64, prefix, leaves [][32]byte) (*Tree, error) {
+	if len(prefix) != bits.OnesCount64(start) {
+		return nil, fmt.Errorf("merkle: a compact range below %d has %d hashes, not %d", start, bits.OnesCount64(start), len(prefix))
 	}
-	return mth(leaves), nil
+	if start+uint64(len(leaves)) == 0 {
+		return nil, errors.New("merkle: a tree has at least one leaf")
+	}
+	return &Tree{start: start, prefix: prefix, leaves: leaves}, nil
+}
+
+// Size is the number of leaves, pruned ones included.
+func (t *Tree) Size() uint64 { return t.start + uint64(len(t.leaves)) }
+
+// Start is the first leaf the tree holds itself.
+func (t *Tree) Start() uint64 { return t.start }
+
+// Root is RFC 6962's MTH of the first n leaves.
+func (t *Tree) Root(n uint64) ([32]byte, error) {
+	if n == 0 || n > t.Size() {
+		return [32]byte{}, fmt.Errorf("merkle: no root of size %d in a tree of %d", n, t.Size())
+	}
+	if n < t.start {
+		return [32]byte{}, ErrPruned
+	}
+	return t.mth(0, n)
 }
 
 // InclusionProof is RFC 6962's PATH: the hashes that, with the leaf at index,
-// recompute the root of leaves.
-func InclusionProof(leaves [][32]byte, index uint64) ([][32]byte, error) {
-	if index >= uint64(len(leaves)) {
-		return nil, fmt.Errorf("merkle: index %d is not below the tree size %d", index, len(leaves))
+// recompute the root of the first n leaves.
+func (t *Tree) InclusionProof(index, n uint64) ([][32]byte, error) {
+	if index >= n || n > t.Size() {
+		return nil, fmt.Errorf("merkle: no inclusion proof of %d in size %d of a tree of %d", index, n, t.Size())
 	}
-	return path(index, leaves), nil
+	if index < t.start {
+		return nil, ErrPruned
+	}
+	return t.path(index, 0, n)
 }
 
 // ConsistencyProof is RFC 6962's PROOF: the hashes that show the tree of the
-// first m leaves is a prefix of the tree of all of them. For m equal to the
-// size, the proof is empty.
-func ConsistencyProof(leaves [][32]byte, m uint64) ([][32]byte, error) {
-	n := uint64(len(leaves))
-	if m == 0 || m > n {
-		return nil, fmt.Errorf("merkle: no consistency proof from size %d to size %d", m, n)
+// first m leaves is a prefix of the tree of the first n. For m equal to n,
+// the proof is empty.
+func (t *Tree) ConsistencyProof(m, n uint64) ([][32]byte, error) {
+	if m == 0 || m > n || n > t.Size() {
+		return nil, fmt.Errorf("merkle: no consistency proof from size %d to %d in a tree of %d", m, n, t.Size())
+	}
+	if m < t.start {
+		return nil, ErrPruned
 	}
 	if m == n {
 		return nil, nil
 	}
-	return subproof(m, leaves, true), nil
+	return t.subproof(m, 0, n, true)
 }
 
-// mth is RFC 6962 §2.1's MTH, for at least one leaf.
-func mth(d [][32]byte) [32]byte {
-	if len(d) == 1 {
-		return d[0]
+// CompactRange is the compact range of the first n leaves: the root of each
+// maximal aligned subtree of [0, n), largest first. It is what a Tree with
+// start n needs below it.
+func (t *Tree) CompactRange(n uint64) ([][32]byte, error) {
+	if n > t.Size() {
+		return nil, fmt.Errorf("merkle: no compact range of %d in a tree of %d", n, t.Size())
 	}
-	k := split(uint64(len(d)))
-	return NodeHash(mth(d[:k]), mth(d[k:]))
-}
-
-// path is RFC 6962 §2.1.1's PATH(m, D[n]).
-func path(m uint64, d [][32]byte) [][32]byte {
-	if len(d) == 1 {
-		return nil
-	}
-	k := split(uint64(len(d)))
-	if m < k {
-		return append(path(m, d[:k]), mth(d[k:]))
-	}
-	return append(path(m-k, d[k:]), mth(d[:k]))
-}
-
-// subproof is RFC 6962 §2.1.2's SUBPROOF(m, D[n], b).
-func subproof(m uint64, d [][32]byte, b bool) [][32]byte {
-	n := uint64(len(d))
-	if m == n {
-		if b {
-			return nil
+	var out [][32]byte
+	off := uint64(0)
+	for b := 63; b >= 0; b-- {
+		w := uint64(1) << b
+		if n&w == 0 {
+			continue
 		}
-		return [][32]byte{mth(d)}
+		h, err := t.mth(off, off+w)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, h)
+		off += w
 	}
-	k := split(n)
-	if m <= k {
-		return append(subproof(m, d[:k], b), mth(d[k:]))
+	return out, nil
+}
+
+// Root is the tree hash of leaves, RFC 6962's MTH. tally's tree is never empty
+// (genesis is leaf 0), so Root of no leaves is an error rather than RFC 6962's
+// hash of the empty string, which no tally checkpoint can name.
+func Root(leaves [][32]byte) ([32]byte, error) {
+	t, err := NewTree(0, nil, leaves)
+	if err != nil {
+		return [32]byte{}, err
 	}
-	return append(subproof(m-k, d[k:], false), mth(d[:k]))
+	return t.Root(t.Size())
+}
+
+// InclusionProof is Tree.InclusionProof over every leaf.
+func InclusionProof(leaves [][32]byte, index uint64) ([][32]byte, error) {
+	return (&Tree{leaves: leaves}).InclusionProof(index, uint64(len(leaves)))
+}
+
+// ConsistencyProof is Tree.ConsistencyProof from size m to every leaf.
+func ConsistencyProof(leaves [][32]byte, m uint64) ([][32]byte, error) {
+	return (&Tree{leaves: leaves}).ConsistencyProof(m, uint64(len(leaves)))
+}
+
+// mth is RFC 6962 §2.1's MTH of the leaves [lo, hi), hi > lo. Below start,
+// it can answer only for a whole subtree of the compact range, or a union of
+// them; RFC 6962's splits never ask for less when the request is at or above
+// start, and ErrPruned says so if they ever did.
+func (t *Tree) mth(lo, hi uint64) ([32]byte, error) {
+	if lo >= t.start {
+		if hi-lo == 1 {
+			return t.leaves[lo-t.start], nil
+		}
+	} else if hi <= t.start {
+		if h, ok := t.prefixNode(lo, hi); ok {
+			return h, nil
+		}
+		if hi-lo == 1 {
+			return [32]byte{}, ErrPruned
+		}
+	}
+	k := split(hi - lo)
+	l, err := t.mth(lo, lo+k)
+	if err != nil {
+		return [32]byte{}, err
+	}
+	r, err := t.mth(lo+k, hi)
+	if err != nil {
+		return [32]byte{}, err
+	}
+	return NodeHash(l, r), nil
+}
+
+// prefixNode is the compact range's subtree [lo, hi), if it is one.
+func (t *Tree) prefixNode(lo, hi uint64) ([32]byte, bool) {
+	off, i := uint64(0), 0
+	for b := 63; b >= 0 && off <= lo; b-- {
+		w := uint64(1) << b
+		if t.start&w == 0 {
+			continue
+		}
+		if off == lo && off+w == hi {
+			return t.prefix[i], true
+		}
+		off += w
+		i++
+	}
+	return [32]byte{}, false
+}
+
+// path is RFC 6962 §2.1.1's PATH(m, D[lo:hi]), with m an absolute index.
+func (t *Tree) path(m, lo, hi uint64) ([][32]byte, error) {
+	if hi-lo == 1 {
+		return nil, nil
+	}
+	k := lo + split(hi-lo)
+	// The leaf's side, then the other side's root.
+	sideLo, sideHi, otherLo, otherHi := lo, k, k, hi
+	if m >= k {
+		sideLo, sideHi, otherLo, otherHi = k, hi, lo, k
+	}
+	p, err := t.path(m, sideLo, sideHi)
+	if err != nil {
+		return nil, err
+	}
+	sib, err := t.mth(otherLo, otherHi)
+	if err != nil {
+		return nil, err
+	}
+	return append(p, sib), nil
+}
+
+// subproof is RFC 6962 §2.1.2's SUBPROOF(m, D[lo:hi], b), with m absolute.
+func (t *Tree) subproof(m, lo, hi uint64, b bool) ([][32]byte, error) {
+	if m == hi {
+		if b {
+			return nil, nil
+		}
+		h, err := t.mth(lo, hi)
+		if err != nil {
+			return nil, err
+		}
+		return [][32]byte{h}, nil
+	}
+	k := lo + split(hi-lo)
+	// m inside the left subtree keeps b; past it, the left subtree is whole
+	// in both trees and the recursion goes right with b false.
+	sideLo, sideHi, otherLo, otherHi := lo, k, k, hi
+	if m > k {
+		sideLo, sideHi, otherLo, otherHi, b = k, hi, lo, k, false
+	}
+	p, err := t.subproof(m, sideLo, sideHi, b)
+	if err != nil {
+		return nil, err
+	}
+	sib, err := t.mth(otherLo, otherHi)
+	if err != nil {
+		return nil, err
+	}
+	return append(p, sib), nil
 }
 
 // split is the largest power of two smaller than n, for n > 1.

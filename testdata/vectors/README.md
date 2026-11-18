@@ -95,6 +95,34 @@ Points that are easy to get wrong:
 - **The header-only segment is valid only as the last one** (§3), and its `prev_hash` is what the
   checkpoint of size 5 is matched against (§7 step 5).
 
+## `merkle.json`
+
+The RFC 6962 tree over the five leaves of `records.json` (SPEC §3.6), every hash as hex:
+
+| Key | What it is |
+| --- | --- |
+| `leaf_hashes_hex` | The leaves, which are `records.json`'s `leaf_hash_hex` in order. |
+| `roots` | The root of every size from 1 to 5. |
+| `inclusion` | The inclusion proof of every leaf in the tree of 5. |
+| `consistency` | The consistency proof from every size from 1 to 5, to 5. An equal size has an empty proof. |
+| `compact_ranges` | The compact range below every start from 1 to 5, largest subtree first. |
+
+To check an implementation: build the tree from the leaves and compare. Every entry was also checked
+against `golang.org/x/mod/sumdb/tlog` (`interop/merkle_test.go`), an independent implementation.
+
+Points that are easy to get wrong:
+
+- **The interior prefix is `0x01`**, and leaves keep their `0x00` (§2.3).
+- **The split is the largest power of two strictly below the size**, so a tree of 5 is `[0, 4)` and `[4, 5)`.
+- **A consistency proof from a power of two omits that size's root**, which the checker supplies (RFC 6962).
+- **Genesis is leaf 0**, so a range below 3 covers genesis and the first two entries.
+
+## `pruned-range.json`
+
+The `pruned.range` file (SPEC §3.6) a prune writes when it keeps records from 3 on and from 5 on, as `text`,
+for the compact ranges of `merkle.json` with the same `start`. A writer produces these bytes, and a reader
+accepts nothing else.
+
 ## `seal.json`
 
 SPEC §4's sealing with every random input fixed: a DEK of `0x42` repeated and a nonce of `00 01 … 0b`, over

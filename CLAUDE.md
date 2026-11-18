@@ -30,7 +30,7 @@ detects; it does not prevent. Nothing past the last trusted checkpoint is covere
 ```
 cmd/tally ──▶ tally, filestore, anchor
 filestore, anchor, seal, tallytest ──▶ tally ──▶ internal/wire, internal/note
-filestore ──▶ internal/fsx
+filestore ──▶ internal/fsx, internal/merkle
 seal ──▶ internal/fsx, internal/wire
 ```
 
