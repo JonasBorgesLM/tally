@@ -106,6 +106,11 @@ The release workflow will refuse to publish a tag with no section here.
   for a `Store` writing segment headers and checking lengths before allocating.
 - SPEC §3.4, the checkpoints file, and the segment vector `testdata/vectors/segments.json`.
 
+### Changed
+
+- RI-05: tampering with a lab log is a script in usher's "Audit log" workflow, not warden, which tests
+  over HTTP only; sapper's `/token` scenario is the load half (#54).
+
 ### Fixed
 
 - `Verify` with a heartbeat could report a clean close as a crash, `HeartbeatGap`, when the closing checkpoint
