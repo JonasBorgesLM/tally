@@ -34,3 +34,43 @@ arrival. `state` can be forged by a key holder.
 ## Reopening criterion
 The time source at v0.2, when tlog-checkpoint removes the time line: decide in #60,
 between witness cosignature timestamps and a separate signed heartbeat note.
+
+## Amendment — time moves to a heartbeat note beside the tlog-checkpoint (#60)
+
+**Decision.** At v0.2 a checkpoint is published as two notes, both signed by the log's key:
+
+1. A **checkpoint**, in plain `tlog-checkpoint` form: the origin, the size, and the Merkle
+   root (#59, SPEC §3.6). It has no time and no state, so a witness (#61) cosigns it as it
+   cosigns any log's.
+2. A **heartbeat note**, `tally-heartbeat/v1`: the origin, the size, the head leaf hash, the
+   root, `recorded_at` and `state`. It carries what the v0.1 body carried, plus the root
+   that binds it to the checkpoint of the same size.
+
+The heartbeat check (T-15) reads heartbeat notes. A verifier matches a heartbeat note
+against the log by its head, as it matched a v0.1 checkpoint, so an incremental start and a
+pruned log still verify without the tree below them. It checks the root whenever it holds
+the tree: from leaf 0, or from a pruned range (SPEC §3.6) that reproduces a root a trusted
+note signs. A checkpoint and a heartbeat note of one size with different roots, or a root
+that differs from the tree, is a fork or a mismatch, as two heads are today.
+
+**What does not change:** time and state remain the signer's own claims. A heartbeat still
+proves that the signer ran, not that the log is complete (T-15), and a key holder can still
+forge `closed`.
+
+**The transition.** A log written by v0.1 holds `tally-chain/v1` checkpoints, and its
+anchors hold them too. A v0.2 verifier accepts both kinds in one log; a v0.2 writer writes
+only the new pair. Nothing stored is rewritten.
+
+**The options not taken.**
+
+- **Extension lines** in the checkpoint, after the root: one note instead of two, and the
+  heartbeat check unchanged. Not taken because c2sp's `tlog-checkpoint` discourages them,
+  and a witness may refuse a checkpoint that carries them, which is what #61 needs.
+- **Witness cosignature timestamps** as the only time: a third party's claim, stronger than
+  the signer's. Not taken as the source because a deployment without a witness would lose
+  the heartbeat entirely. Once a witness exists (#61), its timestamps can be checked as
+  additional evidence; they replace nothing here.
+
+**Cost.** Two notes per publication: twice the signatures, the checkpoints file and the
+anchor hold both, and SPEC gains a format. The writer keeps the tree's compact range in
+memory to sign a root on every checkpoint, which is O(log n) per append.
