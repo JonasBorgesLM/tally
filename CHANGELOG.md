@@ -10,6 +10,13 @@ The release workflow will refuse to publish a tag with no section here.
 
 ### Added
 
+- The release workflow (`.github/workflows/release.yml`, ADR-0014, #57).
+  - **Refuses:** a tag that is not SemVer, not on `main`, not the newest, without a CHANGELOG section, or not
+    signed by an allowed key. Every refusal is seen failing in CI, in a throwaway repository.
+  - **Builds** `tally` for linux and darwin, amd64 and arm64, twice on two runners, and stops unless the two are
+    byte-identical. CI checks reproducibility on every pull request too.
+  - **Publishes** the binaries with an SBOM, a source tarball, `SHA256SUMS` and build provenance.
+- `tally version`, which prints the release tag embedded at build time, or what the build recorded.
 - `docs/AUDIT.md`: the clean-session audit before v0.1.0 (RS-16, #56). It records how the audit was run, with the
   caveat that the auditor was a fresh agent of the same model, so the independence is of context and not of author.
   It gives the eight findings and their outcome, the ones found while fixing them, what held, and what was not

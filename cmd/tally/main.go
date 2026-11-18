@@ -8,6 +8,7 @@
 //	tally prune      --dir DIR --key VKEY --anchor DIR --checkpoint FILE
 //	tally export     --dir DIR [--format jsonl|bundle] [--out FILE] ...
 //	tally bundle-check FILE.tar
+//	tally version
 //
 // verify, head and checkpoint only read: none takes the log's lock or
 // recovers its tail, so they run beside the application and never alter the
@@ -60,6 +61,7 @@ const usage = `usage:
   tally export     --dir DIR [--format jsonl] [--out FILE]
   tally export     --dir DIR --format bundle --out FILE.tar --key VKEY [--anchor DIR]
   tally bundle-check FILE.tar
+  tally version
 
 exit status: 0 intact, 1 violation, 2 usage or IO error
 `
@@ -85,6 +87,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return cmdExport(ctx, args[1:], stdout, stderr)
 	case "bundle-check":
 		return cmdBundleCheck(args[1:], stdout, stderr)
+	case "version":
+		return cmdVersion(args[1:], stdout, stderr)
 	case "-h", "--help", "help":
 		o := &output{w: stdout}
 		o.printf("%s", usage)

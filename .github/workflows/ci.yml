@@ -211,6 +211,39 @@ jobs:
           done
           [ "$found" -eq 1 ] || echo "no fuzz targets yet"
 
+  # ------------------------------------------------------- release checks ----
+  #
+  # The release workflow runs only on a tag, so its two load-bearing parts are
+  # exercised here on every pull request instead (#57): every refusal of
+  # check-release-tag.sh, seen failing in a throwaway repository with a
+  # throwaway key; and two builds of the binaries, from two checkout paths with
+  # two caches, compared byte for byte. A change that made the release
+  # unreproducible fails here, not on the tag.
+  release-checks:
+    name: release checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: src-a
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - name: every refusal of the release tag check
+        working-directory: src-a
+        run: ./.github/scripts/test-check-release-tag.sh
+      - name: two builds are byte-identical
+        run: |
+          cp -r src-a "$RUNNER_TEMP/src-b"
+          (cd src-a && GOCACHE="$RUNNER_TEMP/cache-a" ./.github/scripts/build-release.sh "$RUNNER_TEMP/a" v0.0.0-ci)
+          (cd "$RUNNER_TEMP/src-b" && GOCACHE="$RUNNER_TEMP/cache-b" ./.github/scripts/build-release.sh "$RUNNER_TEMP/b" v0.0.0-ci)
+          (cd "$RUNNER_TEMP/a" && sha256sum ./*) > "$RUNNER_TEMP/a.sum"
+          (cd "$RUNNER_TEMP/b" && sha256sum ./*) > "$RUNNER_TEMP/b.sum"
+          cat "$RUNNER_TEMP/a.sum"
+          [ "$(wc -l < "$RUNNER_TEMP/a.sum")" -eq 4 ] || { echo "::error::expected 4 binaries"; exit 1; }
+          diff "$RUNNER_TEMP/a.sum" "$RUNNER_TEMP/b.sum" || { echo "::error::two builds differ"; exit 1; }
+
   # ---------------------------------------------------------- benchmarks ----
   #
   # RNF-03's measurements, compared between the pull request's base and its
@@ -583,6 +616,7 @@ jobs:
       - fuzz
       - bench
       - runbook-drill
+      - release-checks
       - lint
       - govulncheck
       - docs
