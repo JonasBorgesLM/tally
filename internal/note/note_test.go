@@ -346,7 +346,10 @@ func TestASignerNeverPrintsItsKey(t *testing.T) {
 	leaks := [][]byte{
 		[]byte(strings.SplitN(skey, "+", 5)[4]), // the base64 seed, which may itself hold '+'
 		[]byte("171 171 171 171"),               // the seed as fmt prints a byte slice
-		[]byte("abababab"), []byte("ABABABAB"), []byte("171"),
+		[]byte("abababab"), []byte("ABABABAB"),
+		// Not "171" alone, the decimal of one key byte: %d prints a pointer
+		// address in decimal, which can contain it, and the test flaked on
+		// that (#136). "171 171 171 171" is the seed as %v and %d print it.
 	}
 	values := map[string]any{
 		"*Signer": s, "Signer": *s,
