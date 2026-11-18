@@ -8,7 +8,7 @@ and `Anchor` could only write, though `Verify` has to read it.
 
 ```
 cmd/tally ──▶ tally, filestore, anchor
-filestore, anchor, seal, tallytest ──▶ tally ──▶ internal/wire, internal/note
+filestore, anchor, seal, tallytest ──▶ tally ──▶ internal/wire, internal/note, internal/merkle
 filestore ──▶ internal/fsx, internal/merkle
 seal ──▶ internal/fsx, internal/wire
 ```

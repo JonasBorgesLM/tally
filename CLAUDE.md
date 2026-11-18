@@ -29,7 +29,7 @@ detects; it does not prevent. Nothing past the last trusted checkpoint is covere
 
 ```
 cmd/tally ──▶ tally, filestore, anchor
-filestore, anchor, seal, tallytest ──▶ tally ──▶ internal/wire, internal/note
+filestore, anchor, seal, tallytest ──▶ tally ──▶ internal/wire, internal/note, internal/merkle
 filestore ──▶ internal/fsx, internal/merkle
 seal ──▶ internal/fsx, internal/wire
 ```

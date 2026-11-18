@@ -81,6 +81,20 @@ type Source interface {
 	Checkpoints(ctx context.Context) iter.Seq2[SignedCheckpoint, error]
 }
 
+// CompactRanger is implemented by a Source that was pruned and kept the
+// compact range of the leaves it removed (SPEC §3.6): the root of each
+// maximal aligned subtree of [0, start), largest first. A Log reopening such a
+// store needs it to keep the Merkle tree's root (#60), since the leaves below
+// start are gone. ok is false when the store holds no range: never pruned, or
+// pruned before ranges existed.
+//
+// The range is the host's claim. A root computed from it is worth what the
+// signed checkpoints it reproduces say, and a false hash yields a root no
+// honest checkpoint signs.
+type CompactRanger interface {
+	CompactRange(ctx context.Context) (start uint64, hashes [][32]byte, ok bool, err error)
+}
+
 // Store persists records and checkpoints for a Log. tally calls it from a
 // single goroutine, the writer (ADR-0008).
 //
