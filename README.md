@@ -46,8 +46,9 @@ An auditor, off the host, with a copy of the log and of the anchor:
 tally verify --dir audit-copy --key "$(cat audit.pub)" --anchor anchor-copy   # 0 intact, 1 violated, 2 could not verify
 ```
 
-Running it, including what to monitor from off the host, is in the [RUNBOOK](docs/RUNBOOK.md). Mirroring the
-confirmed events to a dashboard is [below](#mirroring-to-crier).
+Running it, including what to monitor from off the host, is in the [RUNBOOK](docs/RUNBOOK.md). The whole path,
+with an anchor and a tamper step, is [End to end](#end-to-end); mirroring the confirmed events to a dashboard is
+[below](#mirroring-to-crier).
 
 ## The guarantee, stated honestly
 
@@ -122,6 +123,27 @@ In each recipe, the auditor verifies against the copy off the host, with `tally.
 opened on it. Read on the host, a spool says only what the host chose to leave there. The pull or upload
 interval adds to the window in which the newest entries are unprotected. Watching for a host that went
 silent also happens there, never on the host: [RUNBOOK, "Monitoring off the host"](docs/RUNBOOK.md#monitoring-off-the-host).
+
+## End to end
+
+usher, the first consumer, records every privilege grant in a tally log before it takes effect, and runs the
+whole path in one command: usher, its log, an anchor that pulls the checkpoints off the host, `tally verify`,
+and a tamper step. From a clean checkout of [usher](https://github.com/JonasBorgesLM/usher):
+
+```bash
+./scripts/demo-audit.sh
+```
+
+After two real login, consent and token flows and a pull by the anchor, root on the host rolls the log and its
+spool back. **The host's own spool verifies the rollback intact; the anchor's copy reports
+`TruncatedBelowCheckpoint`, exit 1.** That difference is the guarantee above, and the reason an anchor must be
+somewhere the host cannot write.
+
+The anchor in the demo is a container on the same machine, pulling over SSH with a key that may only run
+`rrsync -ro`: it exercises the recipe, not the separation, since root on that machine reaches every
+container. usher's README, "End to end", gives the same pull from a second machine, which has **not yet been
+run**. usher's CI runs the demo on every relevant change, beside a check that alters and truncates a real
+log, and a load test of `/token` with every issuance recorded (RI-05).
 
 ## Mirroring to crier
 

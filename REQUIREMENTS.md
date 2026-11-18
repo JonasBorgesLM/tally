@@ -560,7 +560,7 @@ Recorded in [`docs/adr/`](docs/adr/README.md).
 | # | Question | Answer | Owner if open |
 | --- | --- | --- | --- |
 | 1 | Default checkpoint and heartbeat interval | 1,000 entries or 60 s (RF-06) | — |
-| 2 | Demo anchor | A second Raspberry Pi pulling over `rsync`; it also proves the host holds no destructive credential | #55 |
+| 2 | Demo anchor | A second Raspberry Pi pulling over `rsync`; it also proves the host holds no destructive credential. Run so far with the anchor as a container on the same machine, pulling over SSH with a read-only key (#55, `usher/scripts/demo-audit.sh`); that shows the recipe, not the separation | Second machine: not yet run |
 | 3 | Signer in a separate process in the MVP | No; in process, behind the interface (ADR-0015) | — |
 | 4 | Private key file format | The signed-note key encoding, file at `0600` (ADR-0005) | — |
 | 5 | usher's initial action catalogue | Reviewed against the real repository in usher's ADR | #51 |
