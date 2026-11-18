@@ -3,9 +3,10 @@
 **A tamper-evident audit log library for Go:** a hash chain, signed checkpoints anchored off the
 host, offline verification, and crypto-shredding for LGPD.
 
-> **Status: pre-release.** The library, the file store, the anchor spool, the vault and the CLI are
-> implemented and verified in CI, with the attack suite below. There is no tagged version yet, and the API
-> may change until v0.1.0. Progress is on the [project board](https://github.com/users/JonasBorgesLM/projects/9).
+> **Status: v0.1.0, the first release.** The library, the file store, the anchor spool, the vault and the CLI
+> are verified in CI, with the attack suite below, and were audited before the release ([docs/AUDIT.md](docs/AUDIT.md)).
+> In v0.x a minor version may break the API; the CHANGELOG lists every break. Progress is on the
+> [project board](https://github.com/users/JonasBorgesLM/projects/9).
 
 ## What it does
 
@@ -157,7 +158,7 @@ gh attestation verify tally_vX.Y.Z_linux_amd64 --repo JonasBorgesLM/tally
 ```
 
 Or rebuild it from the tag and compare; [RELEASING.md](RELEASING.md#how-an-auditor-checks-a-release) gives the
-command. No release has been cut yet.
+command.
 
 ## Mirroring to crier
 

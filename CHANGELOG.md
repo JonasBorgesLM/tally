@@ -8,6 +8,22 @@ The release workflow will refuse to publish a tag with no section here.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-18
+
+The first release: the tamper-evident log, the file store, the anchor spool, crypto-shredding through `seal`, and
+the `tally` CLI. The guarantee is conditional, and the README states it with its limits.
+
+### The public API
+
+There is no earlier version to diff against, so `gorelease` only suggests v0.1.0. This is the exported surface of
+each package, from `go doc -short`:
+
+- `github.com/JonasBorgesLM/tally`: `Anchor`, `AnchorReader`, `CheckpointSize`, `Clock`, `DecodeRecord`, `ErrAnchorQueueFull`, `ErrClosed`, `ErrEventConflict`, `ErrLocked`, `ErrPoisoned`, `ErrShredded`, `ErrStoredCheckpointMismatch`, `ErrUntrustedStart`, `Event`, `EventID`, `Failure`, `FailureKind`, `FromCheckpoint`, `LeafHash`, `Limits`, `Log`, `LogID`, `MalformedError`, `MalformedRecord`, `MaxRecordLen`, `NewSigner`, `NewVerifiers`, `Observer`, `Open`, `Option`, `Outcome`, `OutcomeSuccess`, `Payload`, `Plain`, `Principal`, `Receipt`, `Record`, `RecordLogID`, `RecordView`, `RecoveryReporter`, `Report`, `Sealed`, `Service`, `SignedCheckpoint`, `Signer`, `Source`, `SpaceReporter`, `Store`, `Subject`, `SubjectRef`, `System`, `ValidationError`, `Verifiers`, `Verify`, `VerifyCheckpoint`, `VerifyOption`, `WithAnchor`, `WithAnchorFlushTimeout`, `WithAnchorQueue`, `WithAnchors`, `WithCheckpointEvery`, `WithClock`, `WithHeartbeat`, `WithIdempotencyWindow`, `WithLimits`, `WithMaxBatch`, `WithMaxDelay`, `WithObserver`, `WithRand`, `WithRequireFullyAttested`
+- `github.com/JonasBorgesLM/tally/filestore`: `DefaultSegmentSize`, `ErrLoosePermissions`, `ErrPreallocationUnsupported`, `ErrPruneRefused`, `Open`, `OpenReader`, `Option`, `Reader`, `Store`, `WithFreeSpaceThreshold`, `WithLoosePermissions`, `WithPreallocation`, `WithSegmentSize`
+- `github.com/JonasBorgesLM/tally/anchor`: `Dir`, `ErrConflict`, `NewDir`
+- `github.com/JonasBorgesLM/tally/seal`: `AAD`, `ErrLoosePermissions`, `ErrOpen`, `ErrUnknownKEK`, `FileVault`, `KEK`, `NewLocalKEK`, `OpenFileVault`, `Option`, `Payload`, `Vault`, `WithKEKs`, `WithRand`
+- `github.com/JonasBorgesLM/tally/tallytest`: `BlockAppend`, `FailAppend`, `FailPutCheckpoint`, `Fault`, `FaultyStore`, `FixedClock`, `MemStore`, `NewFaultyStore`, `NewFixedClock`, `NewMemStore`, `TearAppend`, `TestSignerKey`
+
 ### Added
 
 - The release workflow (`.github/workflows/release.yml`, ADR-0014, #57).
