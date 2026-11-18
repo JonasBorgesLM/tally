@@ -214,6 +214,7 @@ The procedure, and how to handle vault backups, is in the [RUNBOOK](docs/RUNBOOK
 | [`docs/architecture.md`](docs/architecture.md) | Packages, real signatures, flows |
 | [`docs/RUNBOOK.md`](docs/RUNBOOK.md) | Operating procedures, each executed, and monitoring off the host |
 | [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) | RNF-03's measurements, with hardware and Go version |
+| [`docs/AUDIT.md`](docs/AUDIT.md) | The clean-session audit (RS-16): findings and their outcome, what held, what was not covered |
 | [`docs/adr/`](docs/adr/README.md) | Decisions, with the alternatives they rejected |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Git flow and commit format, checked by CI |
 | [`SECURITY.md`](SECURITY.md) | Private vulnerability reporting |

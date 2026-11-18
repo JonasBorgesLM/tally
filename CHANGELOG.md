@@ -10,6 +10,10 @@ The release workflow will refuse to publish a tag with no section here.
 
 ### Added
 
+- `docs/AUDIT.md`: the clean-session audit before v0.1.0 (RS-16, #56). It records how the audit was run, with the
+  caveat that the auditor was a fresh agent of the same model, so the independence is of context and not of author.
+  It gives the eight findings and their outcome, the ones found while fixing them, what held, and what was not
+  covered.
 - README, "End to end": usher's one-command demo of the log, an anchor that pulls off the host, and a rollback the
   host's own spool accepts and the anchor detects (#55). The anchor there shares the machine; a second one is not
   yet run.
