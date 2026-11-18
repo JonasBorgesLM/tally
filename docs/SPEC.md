@@ -387,7 +387,12 @@ standard, padded, canonical base64 of `key_id (4 bytes) || Ed25519 signature (64
 
 ### 5.2 Body
 
-The text is exactly these six lines, each ending in `\n`. Nothing follows the sixth line.
+A checkpoint's text is one of three bodies. Every line ends in `\n`, and nothing follows the last one.
+The second line tells them apart: `tally-chain/v1`, `tally-heartbeat/v1`, or, in a `tlog-checkpoint`, the
+size. A v0.1 writer wrote the first; a v0.2 writer writes the other two, as a pair of one size (ADR-0006's
+amendment). A verifier accepts all three, in one log.
+
+**`tally-chain/v1`** (v0.1), six lines:
 
 ```
 <origin>
@@ -398,9 +403,31 @@ tally-chain/v1
 <state>
 ```
 
+**`tally-heartbeat/v1`** (v0.2), seven lines: the same, with the Merkle root of the first `size` leaves
+(§3.6) after the head.
+
+```
+<origin>
+tally-heartbeat/v1
+<size>
+<base64(head leaf hash)>
+<base64(root)>
+<recorded_at>
+<state>
+```
+
+**`tlog-checkpoint`** (v0.2), three lines: c2sp.org/tlog-checkpoint with no extension lines. A body of three
+lines whose second line is not a size is malformed, and so is any extension line.
+
+```
+<origin>
+<size>
+<base64(root)>
+```
+
 - `origin` equals the signing key's name (ADR-0005).
 - `size` is an ASCII decimal with no leading zeros, at least `1`, and fits in a `uint64` (§2.4).
-- The hash is standard, padded, canonical base64 of 32 bytes. Decoders MUST reject non-canonical base64.
+- Each hash is standard, padded, canonical base64 of 32 bytes. Decoders MUST reject non-canonical base64.
 - `recorded_at` is RFC 3339 in UTC in exactly one layout, `YYYY-MM-DDTHH:MM:SS.nnnnnnnnnZ`: nine
   fractional digits always, and the letter `Z`. In Go that is the layout
   `2006-01-02T15:04:05.000000000Z` on a UTC time; `time.RFC3339Nano` is **not** it, because it drops
@@ -412,10 +439,11 @@ tally-chain/v1
 - `state` is `open`, or `closed` on the checkpoint written by a clean `Close`. It is the signer's claim as
   well: it lets an honest restart produce no false alarm, and an attacker holding the key can write it too
   (T-15).
-- Line 2 means a `tlog-checkpoint` parser fails on the size line, so this chain head cannot be read as
-  a Merkle root. That is intended.
-
-At v0.2 the body changes to `tlog-checkpoint`. That format has no time line (ADR-0006).
+- A `tlog-checkpoint` has no time and no state, so it takes no part in the heartbeat (§7 step 8) or in
+  time order (§7 step 6). Its root, and a heartbeat note's, binds it to the tree; a witness cosigns it as
+  it is (#61).
+- In `tally-chain/v1`, line 2 makes a `tlog-checkpoint` parser fail on the size line, so a chain head
+  cannot be read as a Merkle root. That is intended.
 
 ### 5.3 Keys
 
@@ -447,7 +475,7 @@ Each checkpoint is read in this order, and the first matching outcome applies:
 3. No signature line verifies under a trusted key: `UnknownKey`. Signatures from unknown keys are
    otherwise ignored.
 4. The body does not parse (§5.2), or its `origin` differs from the name of any trusted key whose signature
-   verified: `MalformedRecord`. Non-canonical base64 in the body's hash line is `NonCanonicalEncoding`.
+   verified: `MalformedRecord`. Non-canonical base64 in a hash line is `NonCanonicalEncoding`.
 5. Otherwise the checkpoint is **accepted**, and only an accepted checkpoint takes part in §7.
 
 ## 6. Limits
@@ -484,7 +512,8 @@ starts are judged.
 - optionally, a requirement that the whole log be attested (RF-18, ADR-0018).
 
 **Error, not violation.** The result is an `error`, never a report, when verification is not possible:
-an IO error, no segment file, a start checkpoint that is not accepted (§5.4), or, with genesis not read,
+an IO error, no segment file, a start checkpoint that is not accepted (§5.4) or that has no head (a
+`tlog-checkpoint`: start from the heartbeat note of its size instead), or, with genesis not read,
 accepted checkpoints naming more than one `origin` (step 3).
 
 **Steps:**
@@ -518,29 +547,39 @@ accepted checkpoints naming more than one `origin` (step 3).
    byte after the violation.
 5. **Checkpoints against the log.** Every accepted checkpoint whose `origin` is not the log's is
    `CheckpointMismatch`, and takes no further part. From here on, "accepted checkpoints" means the rest.
-   For each of them:
+   For each of them, its `head` where it has one, and its root where it has one and the tree is known:
    - `size < f`: below what was read; it is not compared, and takes part only in steps 6 and 8.
-   - `size = f > 0`: `head` MUST equal that segment header's `prev_hash`.
+   - `size = f > 0`: `head` MUST equal that segment header's `prev_hash`; the root MUST equal the root of
+     the stored range (§3.6), when the range starts at `f`.
    - `f < size ≤ Size`: `head` MUST equal the leaf hash at `size - 1`, and `recorded_at` MUST NOT be less
-     than that leaf's `recorded_at` (genesis's `created_at`), else `TimeRegression`.
+     than that leaf's `recorded_at` (genesis's `created_at`), else `TimeRegression`. The root MUST equal the
+     Merkle root of the first `size` leaves.
    - `size > Size`: `TruncatedBelowCheckpoint` if step 4 found no violation. After a violation it is not
      evaluated: the log has already failed, and a broken record is not a truncation.
 
-   A `head` that differs is `ForkDetected` for an anchor checkpoint and `CheckpointMismatch` otherwise. A
-   checkpoint whose comparison succeeds is **matched**.
+   **The tree is known** when step 4 read from leaf 0, or, from `f > 0`, when the segment set holds a pruned
+   range (§3.6) that starts at or above `f`: the verifier builds the tree from it once the leaves reach its
+   start. The range is the host's, so it is used only to compare roots that a signed checkpoint states: a
+   false range makes a comparison fail, never pass. Without a known tree, a root is not compared.
+
+   A `head` or a root that differs is `ForkDetected` for an anchor checkpoint and `CheckpointMismatch`
+   otherwise. A checkpoint whose comparisons succeed is **matched**, if it was compared at all: a
+   `tlog-checkpoint` whose root could not be compared is not.
 6. **Checkpoint order.** Sort accepted checkpoints by `size`, then by `recorded_at`, then by `state`, `open`
-   before `closed`, the start checkpoint included. `recorded_at` MUST NOT decrease along that order, else
-   `TimeRegression`: equivalently, no checkpoint has a later `recorded_at` than one of larger `size`.
+   before `closed`, the start checkpoint included. Among those that carry a `recorded_at` (not a
+   `tlog-checkpoint`), it MUST NOT decrease along that order, else `TimeRegression`: equivalently, no
+   checkpoint has a later `recorded_at` than one of larger `size`.
    Heartbeats produce many checkpoints of one `size`, which the secondary key orders. Two can also share a
    `recorded_at`, since a clock regression repeats the last one (RF-03), and a log closed then signs its
    `closed` checkpoint at the instant of its last `open` one; `Close` signs after the last batch, so the
-   `closed` one is the later. Two with the same `size` and different heads
-   are `ForkDetected`, whether or not either was compared with the log.
+   `closed` one is the later. Two with the same `size` and different heads, or different roots, are
+   `ForkDetected`, whether or not either was compared with the log.
 7. **A start above leaf 0.** If `f > 0`, some accepted checkpoint with `size ≥ f` MUST be matched, else
    `PrunedWithoutTrustedCheckpoint`. This holds for a pruned log and for an incremental start alike. A
    matched start checkpoint satisfies it. The prune marker is not an input: a verifier relies on the
    checkpoint, which is signed, rather than on a file the host wrote.
-8. **Heartbeat.** If `T` is given, take the accepted anchor checkpoints in step 6's order. A gap between
+8. **Heartbeat.** If `T` is given, take the accepted anchor checkpoints that carry a `recorded_at` (not a
+   `tlog-checkpoint`) in step 6's order. A gap between
    consecutive `recorded_at` values, or between the last one and the current time, above `T + tolerance` is
    `HeartbeatGap`, unless the earlier checkpoint's `state` is `closed`. An accepted anchor checkpoint whose
    `recorded_at` is later than the current time plus `tolerance` is `HeartbeatGap` too: a time after now cannot
@@ -595,8 +634,9 @@ REQUIREMENTS is the one corrected. Every check in this document reports exactly 
 covering every `actor_kind`, `payload_kind` and `outcome`, each given as fields, stored bytes and leaf
 hash. [`keys.json`](../testdata/vectors/keys.json) is a public test key in both §5.3 encodings, with
 its seed and key id, and a note it signed (§5.1).
-[`checkpoints.json`](../testdata/vectors/checkpoints.json) is a §5.2 checkpoint over the head of
-`records.json`, signed with that key; the records and it verify (§7) with the whole log attested.
+[`checkpoints.json`](../testdata/vectors/checkpoints.json) is one checkpoint of each §5.2 body over the five
+leaves of `records.json`, signed with that key: `tally-chain/v1`, `tally-heartbeat/v1` and `tlog-checkpoint`,
+the last two with `merkle.json`'s root of 5. The records and each of them verify (§7) with the whole log attested.
 [`segments.json`](../testdata/vectors/segments.json) is `records.json` and that checkpoint as a writer stores
 them (§3): segment 0 holding the five records, the checkpoints file, and the header-only segment 5 that
 the writer starts after the checkpoint (§3, ADR-0019), each file as hex. [`seal.json`](../testdata/vectors/seal.json)

@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/json"
 	"iter"
 	"math/rand/v2"
+	"os"
 	"testing"
 
 	xnote "golang.org/x/mod/sumdb/note"
@@ -265,5 +267,43 @@ func TestNewSignerAgainstXMod(t *testing.T) {
 	}
 	if !v.Verify(msg, sig) {
 		t.Fatal("x/mod does not verify what tally.NewSigner's signer signed")
+	}
+}
+
+// Every published checkpoint vector, the v0.2 tally-heartbeat/v1 note and
+// tlog-checkpoint included (#60), opens under x/mod with the public test key,
+// and its text is the vector's.
+func TestCheckpointVectorsOpenUnderXMod(t *testing.T) {
+	raw, err := os.ReadFile("../testdata/vectors/checkpoints.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var file struct {
+		Checkpoints []struct {
+			Kind string `json:"kind"`
+			Text string `json:"text"`
+			Note string `json:"note"`
+		} `json:"checkpoints"`
+	}
+	if err := json.Unmarshal(raw, &file); err != nil {
+		t.Fatal(err)
+	}
+	v, err := xnote.NewVerifier(tallytest.TestVerifierKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kinds := map[string]bool{}
+	for _, c := range file.Checkpoints {
+		n, err := xnote.Open([]byte(c.Note), xnote.VerifierList(v))
+		if err != nil {
+			t.Fatalf("%s: x/mod refuses it: %v", c.Kind, err)
+		}
+		if n.Text != c.Text {
+			t.Fatalf("%s: x/mod reads another text", c.Kind)
+		}
+		kinds[c.Kind] = true
+	}
+	if len(kinds) != 3 {
+		t.Fatalf("opened %v, want the three bodies", kinds)
 	}
 }

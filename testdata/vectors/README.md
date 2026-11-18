@@ -57,13 +57,18 @@ opens the note, and produces the same note bytes when signing the same text.
 
 ## `checkpoints.json`
 
-One checkpoint (SPEC §5.2) over the head of `records.json`: `size` 5, `head_hex` the last record's
-`leaf_hash_hex`, `recorded_at` the head entry's, and `state` `closed`. It is signed with the test key of
-`keys.json`, and `note` is the whole signed note.
+One checkpoint of each body (SPEC §5.2) over `records.json`, all of `size` 5 and signed with the test key
+of `keys.json`; `note` is the whole signed note and `kind` names the body:
 
-To check an implementation: open `note` under the verifier key (SPEC §5.4), parse `text` (§5.2), and
-verify `records.json` with this checkpoint (§7). The result is a valid log of size 5, all of it
-attested. `golang.org/x/mod/sumdb/note` also opens this note under the published key.
+| `kind` | What it carries |
+| --- | --- |
+| `tally-chain/v1` | v0.1's body: `head_hex`, the last record's `leaf_hash_hex`; `recorded_at` the head entry's; `state` `closed` |
+| `tally-heartbeat/v1` | The same, and `root_hex`, `merkle.json`'s root of 5 |
+| `tlog-checkpoint` | Origin, size and `root_hex` only: no time, no state, no extension line |
+
+To check an implementation: open each `note` under the verifier key (SPEC §5.4), parse `text` (§5.2), and
+verify `records.json` with it (§7), alone and with the others. Each result is a valid log of size 5, all of
+it attested. `golang.org/x/mod/sumdb/note` also opens all three under the published key.
 
 Points that are easy to get wrong:
 
@@ -71,6 +76,8 @@ Points that are easy to get wrong:
   end in a non-zero, but a formatter that trims trailing zeros, such as Go's `time.RFC3339Nano`, is
   still wrong.
 - **The size counts leaves, genesis included.** Four entries make a size of 5 (§2.4).
+- **A `tlog-checkpoint`'s second line is the size**, where a tally body has its name: that line alone tells
+  the three apart.
 
 ## `segments.json`
 

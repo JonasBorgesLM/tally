@@ -12,6 +12,13 @@ The release workflow will refuse to publish a tag with no section here.
 
 - The RFC 6962 Merkle tree over the existing leaves, with inclusion and consistency proofs (#59, ADR-0002). A
   v0.1 log needs nothing rewritten. It is internal until checkpoints carry its root (#60).
+- The v0.2 checkpoint bodies (ADR-0006's amendment, SPEC §5.2): a plain `tlog-checkpoint` (origin, size, Merkle
+  root) and a `tally-heartbeat/v1` note (the v0.1 fields plus the root). `Verify` accepts them beside v0.1's
+  `tally-chain/v1` in one log. It compares a root with the tree when it knows the tree: from leaf 0, or from a
+  pruned range that `filestore.Reader` now also gives. Two notes of one size with different roots are a fork.
+  A `tlog-checkpoint` carries no time, so it takes no part in the heartbeat, and it cannot be a start for
+  `FromCheckpoint`; the heartbeat note of its size can. Nothing writes the new bodies yet. Building the tree
+  costs `Verify` 13% on an Apple M1 (1.26M to 1.10M entries/s), still above RNF-03's 100k.
 - `tally.CompactRanger`, an optional interface a `Source` implements when it kept the compact range of what it
   pruned; `filestore.Store` does. A `Log` keeps the Merkle root of its leaves from it, or from leaf 0, so that
   the v0.2 checkpoints can sign a root without rereading the log (#60). Reopening costs no measurable time more.

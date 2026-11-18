@@ -164,6 +164,31 @@ func checkpointText(origin string, size uint64, head [32]byte, at int64, state s
 	return b.String()
 }
 
+// heartbeatText is SPEC §5.2's tally-heartbeat/v1 body: the chain body's
+// fields, with the Merkle root after the head (ADR-0006's amendment).
+func heartbeatText(origin string, size uint64, head, root [32]byte, at int64, state string) string {
+	var b strings.Builder
+	b.WriteString(origin)
+	b.WriteString("\n" + bodyHeartbeatV1 + "\n")
+	b.WriteString(strconv.FormatUint(size, 10))
+	b.WriteByte('\n')
+	b.WriteString(base64.StdEncoding.EncodeToString(head[:]))
+	b.WriteByte('\n')
+	b.WriteString(base64.StdEncoding.EncodeToString(root[:]))
+	b.WriteByte('\n')
+	b.WriteString(time.Unix(0, at).UTC().Format(checkpointTimeLayout))
+	b.WriteByte('\n')
+	b.WriteString(state)
+	b.WriteByte('\n')
+	return b.String()
+}
+
+// tlogText is SPEC §5.2's tlog-checkpoint body: origin, size and root, with
+// no extension lines.
+func tlogText(origin string, size uint64, root [32]byte) string {
+	return origin + "\n" + strconv.FormatUint(size, 10) + "\n" + base64.StdEncoding.EncodeToString(root[:]) + "\n"
+}
+
 // ErrStoredCheckpointMismatch means the stored log contradicts its own last
 // stored checkpoint: the leaf at that checkpoint's size differs from its head,
 // the log ends below it, or its signature under this log's key is not that
@@ -233,39 +258,21 @@ func signedBy(sigs []byte, name string, keyHash uint32) bool {
 	return false
 }
 
-// CheckpointSize returns the size line of a checkpoint (SPEC §5.2) **without
-// verifying its signature**. It is for a Store reading back the checkpoints it
-// stored itself, such as recovery refusing to truncate below the last one
-// (RF-20); a verifier reads checkpoints with Verify (SPEC §5.4).
+// CheckpointSize returns the size line of a checkpoint (SPEC §5.2), any of its
+// three bodies, **without verifying its signature**. It is for a Store reading
+// back the checkpoints it stored itself, such as recovery refusing to truncate
+// below the last one (RF-20); a verifier reads checkpoints with Verify (SPEC
+// §5.4).
 func CheckpointSize(cp SignedCheckpoint) (uint64, error) {
-	size, _, ok := parseCheckpointHead(cp)
-	if !ok {
+	split := bytes.LastIndex(cp, []byte("\n\n"))
+	if split < 0 {
+		return 0, errors.New("tally: a stored checkpoint is not a signed note")
+	}
+	c, f := parseCheckpointBody(cp[:split+1])
+	if f != nil {
 		return 0, errors.New("tally: a stored checkpoint does not parse")
 	}
-	return size, nil
-}
-
-// parseCheckpointHead reads the size and recorded_at lines of a checkpoint the
-// log itself stored. It is not a verifier's parser: Verify reads checkpoints
-// by SPEC §5.4 (#27).
-func parseCheckpointHead(cp SignedCheckpoint) (size uint64, at int64, ok bool) {
-	split := strings.LastIndex(string(cp), "\n\n")
-	if split < 0 {
-		return 0, 0, false
-	}
-	lines := strings.Split(string(cp[:split]), "\n")
-	if len(lines) != 6 {
-		return 0, 0, false
-	}
-	size, err := strconv.ParseUint(lines[2], 10, 64)
-	if err != nil {
-		return 0, 0, false
-	}
-	t, err := time.Parse(checkpointTimeLayout, lines[4])
-	if err != nil {
-		return 0, 0, false
-	}
-	return size, t.UnixNano(), true
+	return c.size, nil
 }
 
 // dueByEntries reports whether enough entries have been made durable since
