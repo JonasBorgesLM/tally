@@ -82,8 +82,11 @@ func fiveRecords(t *testing.T) (dir string, frameAt []int64) {
 // offset, the segment is truncated to its last good frame, and Recovered
 // counts the bytes (RF-20). A bad middle refuses to open and changes nothing.
 //
-// Seen failing with the quarantine write removed from recoverTail, and with
-// the bad-middle check in classify reduced to "bad tail".
+// Seen failing with the quarantine write removed from recoverTail, with the
+// bad-middle check in classify reduced to "bad tail", with the scan for a
+// frame after a cut-off one removed (Open accepted the changed length), and
+// with the zero-length check removed from readFrame (4096 zeros read as 512
+// frames: nothing recovered, 517 records).
 func TestTailStates(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -101,6 +104,18 @@ func TestTailStates(t *testing.T) {
 		{"bad middle: a length over the ceiling at the tail", func(b []byte, _ []int64) []byte {
 			return binary.BigEndian.AppendUint32(b, tally.MaxRecordLen+1)
 		}, -1},
+		// A length changed to run past the end, with acknowledged frames after
+		// it: not a torn write, and truncating would drop them (A-02, #127).
+		{"bad middle: a length running past the end, frames after it", func(b []byte, at []int64) []byte {
+			binary.BigEndian.PutUint32(b[at[2]:], uint32(len(b))) // #nosec G115 -- a small test file
+			return b
+		}, -1},
+		// Zeros past the last frame, as a crash can leave: a zero length with the
+		// CRC of nothing is not a frame (#127).
+		{"short: zeros after the last frame", func(b []byte, _ []int64) []byte { return append(b, make([]byte, 4096)...) }, 5},
+		{"short: zeros, then a cut-off frame", func(b []byte, at []int64) []byte {
+			return append(append(b, make([]byte, 64)...), b[at[0]:at[0]+10]...)
+		}, 5},
 	}
 	ran := 0
 	for _, c := range cases {

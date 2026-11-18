@@ -127,7 +127,8 @@ as T-01. Found by the clean-session audit (A-01).
 
 ### T-12 — Corruption by crash
 **Actor:** none (failure). **Impact:** a torn tail.
-**Mitigation:** RF-20, RS-10: CRC per record, recovery of the tail, directory fsync.
+**Mitigation:** RF-20, RS-10: CRC per record, recovery of the tail, directory fsync. Zeros past the last frame, which a
+crash can leave, are debris and not frames: a frame of length 0 is not one (SPEC §3.2, #127).
 **Residual:** after a failed fsync, the page cache can show data that never reached disk; a reopen in the same boot trusts it (R-31, ADR-0009).
 
 ### T-13 — Non-canonical bytes with the same meaning
@@ -178,7 +179,7 @@ as T-01. Found by the clean-session audit (A-01).
 ### T-22 — Tampering disguised as a crash
 **Actor:** host attacker. **Impact:** a damaged tail is accepted as an ordinary recovery.
 **Mitigation:** RF-20: nothing below the last local checkpoint is truncated, truncated bytes are quarantined and reported, and RF-09 catches anything below an anchored checkpoint.
-**Residual:** a torn write and a flipped bit in the last acknowledged entry can look identical, so one acknowledged entry past the last checkpoint can be lost without proof it was malicious. Quarantine preserves the evidence; it does not settle the question.
+**Residual:** a torn write and damage to the last acknowledged frame can look identical, so one acknowledged entry past the last checkpoint can be lost without proof it was malicious. Damage to an earlier frame is not disguised: a flipped bit, or a length changed to run past the end, with a complete frame after it is a bad middle, and Open refuses (SPEC §3.3; the second was found by the clean-session audit, A-02, #127, and had dropped every acknowledged entry after it). Truncating the file itself removes everything after the cut and looks like a crash; that is T-05, seen only against a checkpoint. Quarantine preserves the evidence; it does not settle the question.
 
 ### T-23 — Delete leading segments
 **Actor:** host attacker. **Impact:** the oldest history disappears, and what remains still verifies.

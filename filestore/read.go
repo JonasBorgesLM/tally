@@ -22,6 +22,7 @@ import (
 // *tally.MalformedError, a violation, and every other error as an IO failure.
 var (
 	errShortFrame    = errors.New("a frame is cut off")
+	errEmptyFrame    = errors.New("a frame of length 0, which no record is")
 	errFrameTooLong  = errors.New("a frame's length is over its ceiling")
 	errFrameCRC      = errors.New("a frame fails its CRC")
 	errBadHeader     = errors.New("a malformed header")
@@ -31,7 +32,7 @@ var (
 
 // isFormat reports whether err is one of the format errors above.
 func isFormat(err error) bool {
-	for _, f := range []error{errShortFrame, errFrameTooLong, errFrameCRC, errBadHeader, errDiscontinuous, errUpperName} {
+	for _, f := range []error{errShortFrame, errEmptyFrame, errFrameTooLong, errFrameCRC, errBadHeader, errDiscontinuous, errUpperName} {
 		if errors.Is(err, f) {
 			return true
 		}
@@ -138,6 +139,12 @@ func readFrame(r io.Reader, limit uint32) ([]byte, error) {
 		return nil, err
 	}
 	n := binary.BigEndian.Uint32(lenBuf[:])
+	if n == 0 {
+		// No record or checkpoint is empty, and a run of zeros, which a crash
+		// can leave past the last write, would otherwise read as frames: a
+		// zero length with the CRC of nothing, which is also zero (#127).
+		return nil, errEmptyFrame
+	}
 	if n > limit {
 		return nil, fmt.Errorf("%w: %d bytes", errFrameTooLong, n)
 	}

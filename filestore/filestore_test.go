@@ -462,3 +462,16 @@ func TestRecordsChecksSegmentContinuity(t *testing.T) {
 		t.Fatalf("Verify = %+v; want MalformedRecord at leaf 5, Size 5", rep)
 	}
 }
+
+// No record is empty, and an empty frame is not a frame (#127): AppendBatch
+// refuses an empty body rather than write what no reader accepts.
+func TestAnEmptyRecordIsRefused(t *testing.T) {
+	s := mustOpen(t, logDir(t))
+	defer func() { _ = s.Close() }()
+	if err := s.AppendBatch(t.Context(), records(vectorBodies(t), 0)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AppendBatch(t.Context(), []tally.Record{{Seq: 5}}); err == nil {
+		t.Fatal("AppendBatch stored an empty record")
+	}
+}
