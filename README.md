@@ -81,7 +81,7 @@ means the test asserts what is *not* caught, so this table cannot claim more tha
 | T-03 Insert a forged entry in the middle | Detected | `attack.TestT03InsertAForgedEntry` | `SeqRegression`, even for an entry chained to its predecessor. |
 | T-04 Reorder entries | Detected | `attack.TestT04Reorder` | `SeqGap`. |
 | T-05 Truncate the end | Partial, limit asserted | `tally.TestT05TruncationIsSeenOnlyAgainstTheAnchor` | `TruncatedBelowCheckpoint` against the anchor; on the host's word alone, nothing. |
-| T-06 Rewrite from a point, without the key | Detected | `attack.TestT06RewriteWithoutTheKey` | `ForkDetected` against the anchor; the host's own checkpoints are `UnknownKey`. |
+| T-06 Rewrite from a point, without the key | Partial, limit asserted | `attack.TestT06RewriteWithoutTheKey` | `ForkDetected` against the anchor. Without one, a rewrite that deletes the checkpoints after it is signed by the honest writer and verifies. |
 | T-07 Rewrite with the key, host compromised | Partial, limit asserted | `tally.TestT07RewriteWithTheKeyIsAForkAgainstTheAnchor` | `ForkDetected`, only against a checkpoint anchored before the rewrite. |
 | T-08 Roll back to an older checkpoint | Partial, limit asserted | `tally.TestT08RollbackIsSeenOnlyAgainstTheAnchor` | `TruncatedBelowCheckpoint` against the anchor; on the host's word alone, nothing. |
 | T-09 Split view | Partial, limit asserted | `attack.TestT09SplitView` | Two histories each verify against their own anchor; one shared anchor makes the second a fork. |

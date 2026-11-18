@@ -116,6 +116,11 @@ The release workflow will refuse to publish a tag with no section here.
 
 ### Fixed
 
+- `tally.Open` reopened a log its own last stored checkpoint contradicted, and its next checkpoint signed the
+  rewritten history with the real key. It now compares the leaf at that checkpoint's size with its head, and the
+  checkpoint's signature under the signer's key with the signer's own, and refuses with
+  `ErrStoredCheckpointMismatch`. T-06 is now partial: a rewrite that deletes the checkpoints after it is still signed
+  and verifies without an anchor, and the attack suite asserts it. Found by the clean-session audit (A-01, #126).
 - `Verify` with a heartbeat could report a clean close as a crash, `HeartbeatGap`, when the closing checkpoint
   shared its size and its `recorded_at` with the last open one, as a clock regression makes it: the two were left
   in the anchor's order. They are now ordered open before closed (SPEC §7 step 6). Found by the RUNBOOK's

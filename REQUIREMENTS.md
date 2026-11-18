@@ -118,7 +118,10 @@ and is written that way:
 
 It says nothing about entries past the last trusted checkpoint (RF-18). Without
 an anchor, the library only detects tampering by someone without the signing
-key, and only over entries a checkpoint covers.
+key, and only over entries a checkpoint **still stored** covers: records are not
+signed, so a host that rewrites them and deletes the checkpoints after the
+rewritten point leaves nothing to contradict it, and the writer's next
+checkpoint then signs what is stored (T-06, audit A-01).
 
 ### 1.4 Design principles
 
