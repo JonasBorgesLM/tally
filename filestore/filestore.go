@@ -244,6 +244,9 @@ func (s *Store) AppendBatch(ctx context.Context, recs []tally.Record) error {
 		if want := s.next + uint64(i); r.Seq != want { // #nosec G115 -- i is a slice index
 			return fmt.Errorf("filestore: record %d of the batch has seq %d, want %d", i, r.Seq, want)
 		}
+		if len(r.Body) == 0 {
+			return fmt.Errorf("filestore: record %d is empty", r.Seq)
+		}
 		if len(r.Body) > tally.MaxRecordLen {
 			return fmt.Errorf("filestore: record %d is %d bytes, over the %d-byte ceiling", r.Seq, len(r.Body), tally.MaxRecordLen)
 		}

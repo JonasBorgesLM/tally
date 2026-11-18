@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"io/fs"
 	"os"
@@ -82,7 +83,20 @@ func (s *Store) classify(name string, hdrLen int, limit uint32) (t tail, err err
 		case errors.Is(err, io.EOF):
 			t.state = tailClean
 			return t, nil
-		case errors.Is(err, errShortFrame):
+		case errors.Is(err, errShortFrame), errors.Is(err, errEmptyFrame):
+			// A crash leaves debris after the last frame it completed: a frame
+			// cut off, or zeros. It never leaves a complete frame after that
+			// debris, since every acknowledged frame was made durable before
+			// the next batch was written. One there means the cut-off frame
+			// is not a torn write but a changed length, and truncating would
+			// drop every acknowledged frame after it (audit A-02, #127).
+			at, ferr := frameAfter(f, t.end, t.size, limit)
+			if ferr != nil {
+				return t, fmt.Errorf("filestore: %s: %w", name, ferr)
+			}
+			if at >= 0 {
+				return t, fmt.Errorf("filestore: %s at offset %d: %w, with a complete frame after it at offset %d", name, t.end, err, at)
+			}
 			t.state = tailShort
 			return t, nil
 		case errors.Is(err, errFrameCRC):
@@ -99,6 +113,50 @@ func (s *Store) classify(name string, hdrLen int, limit uint32) (t tail, err err
 			return t, nil
 		default:
 			return t, fmt.Errorf("filestore: %s at offset %d: %w", name, t.end, err)
+		}
+	}
+}
+
+// frameAfter returns the offset of the first complete, non-empty frame whose
+// CRC matches that starts after offset from in f, a file of size bytes, or -1
+// if there is none. It reads f once, in order, and reads a candidate's body
+// only when its length is possible: over 0, at most limit (checked before
+// allocating, RS-05), and within the file.
+func frameAfter(f fsx.File, from, size int64, limit uint32) (int64, error) {
+	if size-from < 2*frameOverhead+1 {
+		return -1, nil // no room for the cut-off frame's length and a frame after it
+	}
+	r := bufio.NewReaderSize(io.NewSectionReader(f, from+1, size-from-1), 64<<10)
+	var win [4]byte
+	off := from + 1 // where win starts, once full
+	for i := 0; ; i++ {
+		b, err := r.ReadByte()
+		if errors.Is(err, io.EOF) {
+			return -1, nil
+		}
+		if err != nil {
+			return -1, err
+		}
+		if i < 4 {
+			win[i] = b
+			if i < 3 {
+				continue
+			}
+		} else {
+			copy(win[:], win[1:])
+			win[3] = b
+			off++
+		}
+		n := binary.BigEndian.Uint32(win[:])
+		if n == 0 || n > limit || off+frameOverhead+int64(n) > size {
+			continue
+		}
+		buf := make([]byte, int(n)+4)
+		if _, err := f.ReadAt(buf, off+4); err != nil {
+			return -1, err
+		}
+		if binary.BigEndian.Uint32(buf[n:]) == crc32.Checksum(buf[:n], castagnoli()) {
+			return off, nil
 		}
 	}
 }

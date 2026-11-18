@@ -11,8 +11,8 @@ import (
 // after its header (RS-04, RS-05). Invariants:
 //
 //   - the reader stops only on io.EOF, exactly between frames, or on one of
-//     the format errors a verifier reports (errShortFrame, errFrameTooLong,
-//     errFrameCRC), never on anything else;
+//     the format errors a verifier reports (errShortFrame, errEmptyFrame,
+//     errFrameTooLong, errFrameCRC), never on anything else;
 //   - every accepted body is within the limit, checked before allocating;
 //   - every accepted frame re-encodes to exactly the bytes it was read from,
 //     so a reader and a writer agree byte for byte;
@@ -44,7 +44,7 @@ func FuzzFrame(f *testing.F) {
 				return
 			}
 			if err != nil {
-				if !errors.Is(err, errShortFrame) && !errors.Is(err, errFrameTooLong) && !errors.Is(err, errFrameCRC) {
+				if !errors.Is(err, errShortFrame) && !errors.Is(err, errEmptyFrame) && !errors.Is(err, errFrameTooLong) && !errors.Is(err, errFrameCRC) {
 					t.Fatalf("an error outside the format's: %v", err)
 				}
 				return

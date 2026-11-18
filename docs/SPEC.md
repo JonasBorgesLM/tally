@@ -176,7 +176,9 @@ body   [len]byte the record
 crc    uint32    CRC-32C (Castagnoli) of body
 ```
 
-`len` is checked against the frame ceiling (§6) before the body is read.
+`len` is checked against the frame ceiling (§6) before the body is read. `len` MUST be at least 1: no record and no
+checkpoint is empty, and a run of zeros, which a crash can leave past the last write, would otherwise read as frames,
+a length of 0 followed by the CRC of nothing, which is also 0. A frame with `len` 0 is a violation.
 
 **The CRC is not a security mechanism.** It detects partial writes and accidental corruption, and
 anyone rewriting a file recomputes it. A verifier MUST treat a CRC mismatch as a violation, but MUST
@@ -189,9 +191,13 @@ For the last segment, reading frames from the start, the tail ends in exactly on
 | State | Bytes after the last good frame | Writer's recovery | Verifier |
 | --- | --- | --- | --- |
 | Clean | none | none | ok |
-| Short | fewer than a full frame: fewer than 4 bytes, or fewer than `len + 8` bytes, so the body or the CRC is cut off | quarantine and truncate | `MalformedRecord` |
+| Short | fewer than a full frame: fewer than 4 bytes, or fewer than `len + 8` bytes, so the body or the CRC is cut off; or a `len` of 0. **Only if** no complete frame with `len` ≥ 1 and a matching CRC starts anywhere after it: otherwise a bad middle | quarantine and truncate | `MalformedRecord` |
 | Bad tail | a complete frame failing its CRC, with nothing after it | quarantine and truncate, reporting it | `MalformedRecord` |
-| Bad middle | a frame failing its CRC with bytes after it, or `len` over the limit | **refuse to open** | `MalformedRecord` |
+| Bad middle | a frame failing its CRC with bytes after it, `len` over the limit, or a Short frame with a complete, CRC-valid frame after it | **refuse to open** | `MalformedRecord` |
+
+A crash leaves debris after the last frame it completed, never a complete frame after that debris: every acknowledged
+frame was made durable before the next batch was written. A complete frame after a cut-off one means its length was
+changed, and truncating there would drop every acknowledged frame after it.
 
 In a segment that is not the last, every frame MUST be complete and good: any of the states other than
 Clean is `MalformedRecord`.

@@ -116,6 +116,13 @@ The release workflow will refuse to publish a tag with no section here.
 
 ### Fixed
 
+- One changed length field in a segment, run past the end of the file, was recovered as a torn write: every
+  acknowledged entry after it was quarantined and dropped, and the log verified. A cut-off frame with a complete,
+  CRC-valid frame after it is now a bad middle, and Open refuses (SPEC §3.3). Found by the clean-session audit (A-02,
+  #127).
+- Zeros past the last frame, which a crash can leave, read as empty frames: nothing was recovered, and the store
+  returned empty records the log could not reopen past. A frame of length 0 is now not a frame (SPEC §3.2), it is
+  recovered as debris, and `AppendBatch` refuses an empty record (#127).
 - `tally.Open` reopened a log its own last stored checkpoint contradicted, and its next checkpoint signed the
   rewritten history with the real key. It now compares the leaf at that checkpoint's size with its head, and the
   checkpoint's signature under the signer's key with the signer's own, and refuses with
