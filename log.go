@@ -322,6 +322,10 @@ func (l *Log) load(ctx context.Context, origin string) error {
 		l.lastCP = lastCheckpoint{size: 1} // the entry trigger counts entries, not genesis
 		if stored != nil {
 			l.lastCP = lastCheckpoint{size: min(stored.size, l.head.size), at: stored.at}
+			if stored.hasRoot {
+				// The pair's tlog-checkpoint was stored before this note.
+				l.lastCP.tlogSize = stored.size
+			}
 		}
 		return nil
 	}

@@ -31,8 +31,10 @@ func prunableLog(t *testing.T) (dir, anchorDir string, unanchored, anchored tall
 		if err != nil {
 			t.Fatal(err)
 		}
-		unanchored = cp
-		break
+		if !isTlog(cp) {
+			unanchored = cp
+			break
+		}
 	}
 	writeLog(t, dir, anchorDir, "b", 6, true)
 	a, err := anchor.NewDir(anchorDir)
@@ -43,13 +45,56 @@ func prunableLog(t *testing.T) (dir, anchorDir string, unanchored, anchored tall
 		if err != nil {
 			t.Fatal(err)
 		}
-		anchored = cp
-		break
+		if !isTlog(cp) {
+			anchored = cp
+			break
+		}
 	}
 	if unanchored == nil || anchored == nil {
 		t.Fatal("the fixture has no checkpoint")
 	}
 	return dir, anchorDir, unanchored, anchored
+}
+
+// isTlog reports whether cp's body is a tlog-checkpoint (SPEC §5.2): three
+// lines, the second a size. It names no head, so a prune cannot start from it.
+func isTlog(cp tally.SignedCheckpoint) bool {
+	text, _, ok := strings.Cut(string(cp), "\n\n")
+	lines := strings.Split(text, "\n")
+	return ok && len(lines) == 3 && !strings.HasPrefix(lines[1], "tally-")
+}
+
+// A prune at an anchored tlog-checkpoint is refused, and says to use the
+// heartbeat note of its size, which names the head a prune verifies from
+// (#60). Nothing is removed.
+func TestPruneAtATlogCheckpointIsRefused(t *testing.T) {
+	dir, anchorDir, _, _ := prunableLog(t)
+	a, err := anchor.NewDir(anchorDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tlog tally.SignedCheckpoint
+	for cp, err := range a.Checkpoints(context.Background()) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		if isTlog(cp) {
+			tlog = cp
+			break
+		}
+	}
+	if tlog == nil {
+		t.Fatal("the anchor holds no tlog-checkpoint")
+	}
+	before := segments(t, dir)
+	_, stderr, code := cli(t, "prune", "--dir", dir, "--key", tallytest.TestVerifierKey, "--anchor", anchorDir,
+		"--checkpoint", writeCheckpoint(t, tlog))
+	if code != exitViolation || !strings.Contains(stderr, "heartbeat note") {
+		t.Fatalf("status %d, stderr:\n%s\nwant status %d naming the heartbeat note", code, stderr, exitViolation)
+	}
+	if after := segments(t, dir); len(after) != len(before) {
+		t.Fatalf("segments %v -> %v: a refused prune removed something", before, after)
+	}
 }
 
 func writeCheckpoint(t *testing.T, cp tally.SignedCheckpoint) string {
