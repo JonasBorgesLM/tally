@@ -220,6 +220,13 @@ each package, from `go doc -short`:
 
 ### Fixed
 
+- **The writer never signs a root over a planted range** (audit A2-03). On a log v0.1 pruned, which has no range and
+  no root, a `pruned.range` the host wrote was adopted on reopen, and the log's own key then signed a root over a
+  prefix nothing had checked. A stored range is now used only when the last stored checkpoint's root, at or above
+  the range's start, has checked it; otherwise the tree is unknown and the writer keeps signing `tally-chain/v1`
+  (SPEC §3.6). Tests now cover the writer refusing a tampered range and a prune refusing a range below the first
+  segment, which nothing tested before (A2-04).
+
 - The clean-session audit's low findings (#128):
   - A segment header that names another log_id, or a prev_hash its first record does not chain to, is now
     malformed, where it verified (A-03).
