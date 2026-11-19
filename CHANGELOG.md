@@ -8,6 +8,12 @@ The release workflow will refuse to publish a tag with no section here.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-19
+
+The fixes from v0.2.0's clean-session audit (`docs/AUDIT.md`), by an agent of a different model from the one that
+wrote the code: no CRITICAL or HIGH finding. `gorelease -base=v0.2.0` reports no API change; `tally prune` gains a
+flag.
+
 ### Fixed
 
 - **`tally prune --witness-key` refuses a prune above what the witness cosigned** (audit A2-05). Pruning above the

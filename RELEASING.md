@@ -4,7 +4,7 @@ One maintainer cuts releases. These are the steps that are easy to get backwards
 model is in [`CONTRIBUTING.md`](CONTRIBUTING.md#git-flow).
 
 **v0.1.0 was the first release** cut through this file and the release workflow (`.github/workflows/release.yml`,
-#57), after `v0.1.0-rc.1` as the workflow's first run (#58); v0.2.0 followed the same steps.
+#57), after `v0.1.0-rc.1` as the workflow's first run (#58); v0.2.0 and v0.2.1 followed the same steps.
 
 ## Before the first tag
 
