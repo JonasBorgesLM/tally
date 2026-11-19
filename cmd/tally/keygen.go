@@ -25,6 +25,7 @@ func cmdKeygen(args []string, stdout, stderr io.Writer) int {
 	flags := newFlags("keygen", stderr)
 	name := flags.String("name", "", "the key's name, which is the log's origin")
 	out := flags.String("out", "", "the path prefix: writes PREFIX.key and PREFIX.pub")
+	witnessKey := flags.Bool("witness", false, "a witness's key, cosignature/v1 (type 0x04), instead of a log's (ADR-0021)")
 	if err := flags.Parse(args); err != nil {
 		return exitError
 	}
@@ -42,7 +43,11 @@ func cmdKeygen(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 
-	skey, vkey, err := note.GenerateKey(rand.Reader, *name)
+	gen, keep := note.GenerateKey, "keep it on the signing host only"
+	if *witnessKey {
+		gen, keep = note.GenerateCosignerKey, "keep it on the witness's machine only"
+	}
+	skey, vkey, err := gen(rand.Reader, *name)
 	if err != nil {
 		return fail(stderr, err)
 	}
@@ -56,7 +61,7 @@ func cmdKeygen(args []string, stdout, stderr io.Writer) int {
 	}
 
 	o := &output{w: stdout}
-	o.printf("private key  %s  (mode 0600; keep it on the signing host only)\n", sanitize(keyPath))
+	o.printf("private key  %s  (mode 0600; %s)\n", sanitize(keyPath), keep)
 	o.printf("verifier key %s\n", sanitize(pubPath))
 	o.printf("%s\n", sanitize(vkey))
 	return o.status(exitIntact)

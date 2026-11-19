@@ -7,10 +7,11 @@ and `Anchor` could only write, though `Verify` has to read it.
 ## Packages and dependency direction
 
 ```
-cmd/tally ──▶ tally, filestore, anchor, internal/merkle
+cmd/tally ──▶ tally, filestore, anchor, witness, internal/merkle
 filestore, anchor, seal, tallytest ──▶ tally ──▶ internal/wire, internal/note, internal/merkle
 filestore ──▶ internal/fsx, internal/merkle
 seal ──▶ internal/fsx, internal/wire
+witness ──▶ internal/fsx, internal/merkle, internal/note
 ```
 
 `tally` (the root) imports no subpackage. `internal/wire`, `internal/note`, `internal/fsx` and `internal/merkle`
@@ -28,6 +29,7 @@ tally/                  module github.com/JonasBorgesLM/tally (stdlib only, RNF-
 ├── internal/wire/      strict encoding
 ├── internal/note/      minimal signed-note (Ed25519)
 ├── internal/fsx/       fsync of file and directory, flock, atomic write, injectable filesystem
+├── witness/            a c2sp tlog-witness: cosigns consistent checkpoints, on another machine (ADR-0021)
 ├── internal/merkle/    the RFC 6962 tree, inclusion and consistency proofs, compact ranges
 ├── cmd/tally/          CLI (flag, no cobra)
 ├── docs/, testdata/vectors/

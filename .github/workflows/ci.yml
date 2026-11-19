@@ -470,7 +470,7 @@ jobs:
     if: github.event_name == 'pull_request'
     env:
       TYPES: feat|fix|docs|test|refactor|perf|build|ci|chore|revert
-      SCOPES: tally|wire|note|fsx|filestore|seal|anchor|attack|tallytest|cli|interop|ecosystem|usher|crier|adr|docs|deps|ci|release
+      SCOPES: tally|wire|note|fsx|filestore|seal|anchor|witness|attack|tallytest|cli|interop|ecosystem|usher|crier|adr|docs|deps|ci|release
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

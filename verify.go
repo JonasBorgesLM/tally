@@ -251,6 +251,23 @@ const (
 	bodyHeartbeatV1 = "tally-heartbeat/v1"
 )
 
+// CountCosignatures accepts cp under keys (SPEC §5.4) and returns how many of
+// the witnesses cosigned it (§5.5, ADR-0021). An error means cp is not
+// accepted, or a witness key is not one (type 0x04), or a trusted witness's
+// cosignature does not verify: a caller never counts what it cannot trust.
+func CountCosignatures(cp SignedCheckpoint, keys, witnesses Verifiers) (int, error) {
+	for _, w := range witnesses.keys {
+		if !w.Witness() {
+			return 0, fmt.Errorf("tally: %s+%08x is not a witness's key", w.Name(), w.KeyHash())
+		}
+	}
+	c, f := readCheckpoint(cp, keys, witnesses.keys)
+	if f != nil {
+		return 0, fmt.Errorf("tally: checkpoint not accepted: %v: %s", f.Kind, f.Note)
+	}
+	return c.cosigned, nil
+}
+
 // parseCheckpointBody is SPEC §5.2, strictly: a tally-chain/v1 checkpoint
 // (v0.1), a tally-heartbeat/v1 note, or a tlog-checkpoint (v0.2, #60).
 func parseCheckpointBody(text []byte) (checkpoint, *Failure) {
