@@ -90,7 +90,7 @@ func FuzzCheckpoint(f *testing.F) {
 	f.Add(seed[:len(seed)/2])
 	f.Add(bytes.Replace(seed, []byte("\n\n"), []byte("\n"), 1))
 	f.Fuzz(func(t *testing.T, in []byte) {
-		c, fail := readCheckpoint(bytes.Clone(in), keys)
+		c, fail := readCheckpoint(bytes.Clone(in), keys, nil)
 		if fail != nil {
 			switch fail.Kind {
 			case MalformedRecord, NonCanonicalEncoding, BadSignature, UnknownKey:

@@ -54,6 +54,7 @@ const usage = `usage:
   tally verify     --dir DIR --key VKEY [--key-file FILE] [--anchor DIR]
                    [--require-fully-attested] [--from FILE]
                    [--heartbeat DURATION --tolerance DURATION]
+                   [--witness WKEY [--witness-quorum N] [--require-witnessed]]
   tally head       --dir DIR
   tally checkpoint --dir DIR --key VKEY [--key-file FILE] [--tlog]
   tally keygen     --name ORIGIN --out PREFIX

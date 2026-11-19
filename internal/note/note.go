@@ -43,6 +43,9 @@ var (
 
 const (
 	algEd25519 = 0x01
+	// algCosignatureV1 is c2sp.org/tlog-cosignature's timestamped Ed25519
+	// cosignature (signed-note type 0x04): a witness's key (#61, ADR-0021).
+	algCosignatureV1 = 0x04
 
 	// MaxSize is the largest note, in bytes (SPEC §6).
 	MaxSize = 64 << 10
@@ -53,11 +56,12 @@ const (
 	sigPrefix = "— " // EM DASH, space
 )
 
-// keyID is SPEC §5.1's key id: SHA-256(name || 0x0A || 0x01 || public key)[:4].
-func keyID(name string, pub ed25519.PublicKey) uint32 {
+// keyID is SPEC §5.1's key id: SHA-256(name || 0x0A || alg || public key)[:4],
+// alg 0x01 for a log's key and 0x04 for a witness's.
+func keyID(name string, alg byte, pub ed25519.PublicKey) uint32 {
 	h := sha256.New()
 	h.Write([]byte(name))
-	h.Write([]byte{'\n', algEd25519})
+	h.Write([]byte{'\n', alg})
 	h.Write(pub)
 	return binary.BigEndian.Uint32(h.Sum(nil))
 }
@@ -84,12 +88,18 @@ func decode64(s string) ([]byte, error) {
 	return b, nil
 }
 
-// Verifier is a trusted public key.
+// Verifier is a trusted public key: a log's (type 0x01), whose signatures
+// Open returns in SignedBy, or a witness's (type 0x04), whose cosignatures it
+// returns in Cosignatures.
 type Verifier struct {
 	name string
 	id   uint32
+	alg  byte
 	pub  ed25519.PublicKey
 }
+
+// Witness reports whether the key is a witness's cosignature key (type 0x04).
+func (v *Verifier) Witness() bool { return v.alg == algCosignatureV1 }
 
 // Name is the key's name, which for tally is the log's origin.
 func (v *Verifier) Name() string { return v.name }
@@ -97,15 +107,16 @@ func (v *Verifier) Name() string { return v.name }
 // KeyHash is the key id.
 func (v *Verifier) KeyHash() uint32 { return v.id }
 
-// NewVerifier parses a verifier key, `<name>+<key_id hex>+<base64(0x01 || public key)>`
-// (SPEC §5.3). The key id must match the one computed from the name and key.
+// NewVerifier parses a verifier key, `<name>+<key_id hex>+<base64(alg || public key)>`
+// (SPEC §5.3), alg 0x01 for a log's key or 0x04 for a witness's. The key id
+// must match the one computed from the name, alg and key.
 func NewVerifier(vkey string) (*Verifier, error) {
 	// SplitN, not Split: base64 uses '+', so the key part may contain it.
 	parts := strings.SplitN(vkey, "+", 3)
 	if len(parts) != 3 {
 		return nil, fmt.Errorf("%w: a verifier key has three parts", ErrMalformed)
 	}
-	name, id, key, err := parseKeyParts(parts[0], parts[1], parts[2])
+	name, id, alg, key, err := parseKeyParts(parts[0], parts[1], parts[2])
 	if err != nil {
 		return nil, err
 	}
@@ -113,33 +124,33 @@ func NewVerifier(vkey string) (*Verifier, error) {
 		return nil, fmt.Errorf("%w: an Ed25519 public key is %d bytes", ErrMalformed, ed25519.PublicKeySize)
 	}
 	pub := ed25519.PublicKey(key)
-	if keyID(name, pub) != id {
+	if keyID(name, alg, pub) != id {
 		return nil, fmt.Errorf("%w: the key id does not match the name and key", ErrMalformed)
 	}
-	return &Verifier{name: name, id: id, pub: pub}, nil
+	return &Verifier{name: name, id: id, alg: alg, pub: pub}, nil
 }
 
 // parseKeyParts checks the parts common to both key encodings and returns the
-// key bytes after the algorithm byte.
-func parseKeyParts(name, idHex, key64 string) (keyName string, id uint32, key []byte, err error) {
+// algorithm byte and the key bytes after it.
+func parseKeyParts(name, idHex, key64 string) (keyName string, id uint32, alg byte, key []byte, err error) {
 	if !validName(name) {
-		return "", 0, nil, fmt.Errorf("%w: invalid key name", ErrMalformed)
+		return "", 0, 0, nil, fmt.Errorf("%w: invalid key name", ErrMalformed)
 	}
 	if len(idHex) != 8 || strings.ToLower(idHex) != idHex {
-		return "", 0, nil, fmt.Errorf("%w: a key id is 8 lowercase hex digits", ErrMalformed)
+		return "", 0, 0, nil, fmt.Errorf("%w: a key id is 8 lowercase hex digits", ErrMalformed)
 	}
 	id64, perr := strconv.ParseUint(idHex, 16, 32)
 	if perr != nil {
-		return "", 0, nil, fmt.Errorf("%w: a key id is 8 lowercase hex digits", ErrMalformed)
+		return "", 0, 0, nil, fmt.Errorf("%w: a key id is 8 lowercase hex digits", ErrMalformed)
 	}
 	raw, derr := decode64(key64)
 	if derr != nil {
-		return "", 0, nil, derr
+		return "", 0, 0, nil, derr
 	}
-	if len(raw) < 1 || raw[0] != algEd25519 {
-		return "", 0, nil, fmt.Errorf("%w: only Ed25519 keys (algorithm 0x01) are supported", ErrMalformed)
+	if len(raw) < 1 || (raw[0] != algEd25519 && raw[0] != algCosignatureV1) {
+		return "", 0, 0, nil, fmt.Errorf("%w: only Ed25519 keys (0x01) and Ed25519 cosignature/v1 keys (0x04) are supported", ErrMalformed)
 	}
-	return name, uint32(id64), raw[1:], nil
+	return name, uint32(id64), raw[0], raw[1:], nil
 }
 
 // Signer holds a private key. Its error messages never include the key, and
@@ -185,22 +196,38 @@ func (s Signer) GoString() string { return s.String() }
 // `PRIVATE+KEY+<name>+<key_id hex>+<base64(0x01 || 32-byte seed)>` (SPEC §5.3).
 // The key id must match the public key derived from the seed.
 func NewSigner(skey string) (*Signer, error) {
-	parts := strings.SplitN(skey, "+", 5)
-	if len(parts) != 5 || parts[0] != "PRIVATE" || parts[1] != "KEY" {
-		return nil, fmt.Errorf("%w: a signer key is PRIVATE+KEY+<name>+<id>+<key>", ErrMalformed)
-	}
-	name, id, seed, err := parseKeyParts(parts[2], parts[3], parts[4])
+	// A witness's key signs cosignatures only: as a note signer it would pass
+	// for a log's key under another name (ADR-0021).
+	name, id, priv, err := parseSignerKey(skey, algEd25519, "a note signer key is Ed25519 (0x01); use NewCosigner for a witness's")
 	if err != nil {
 		return nil, err
 	}
-	if len(seed) != ed25519.SeedSize {
-		return nil, fmt.Errorf("%w: an Ed25519 seed is %d bytes", ErrMalformed, ed25519.SeedSize)
-	}
-	priv := ed25519.NewKeyFromSeed(seed)
-	if keyID(name, publicKey(priv)) != id {
-		return nil, fmt.Errorf("%w: the key id does not match the key", ErrMalformed)
-	}
 	return &Signer{name: name, id: id, sign: func(msg []byte) []byte { return ed25519.Sign(priv, msg) }}, nil
+}
+
+// parseSignerKey parses `PRIVATE+KEY+<name>+<key_id hex>+<base64(alg || seed)>`
+// for the one alg the caller accepts, wrongAlg saying why another is refused,
+// and checks the key id against the key the seed derives.
+func parseSignerKey(skey string, alg byte, wrongAlg string) (name string, id uint32, priv ed25519.PrivateKey, err error) {
+	parts := strings.SplitN(skey, "+", 5)
+	if len(parts) != 5 || parts[0] != "PRIVATE" || parts[1] != "KEY" {
+		return "", 0, nil, fmt.Errorf("%w: a signer key is PRIVATE+KEY+<name>+<id>+<key>", ErrMalformed)
+	}
+	name, id, got, seed, err := parseKeyParts(parts[2], parts[3], parts[4])
+	if err != nil {
+		return "", 0, nil, err
+	}
+	if got != alg {
+		return "", 0, nil, fmt.Errorf("%w: %s", ErrMalformed, wrongAlg)
+	}
+	if len(seed) != ed25519.SeedSize {
+		return "", 0, nil, fmt.Errorf("%w: an Ed25519 seed is %d bytes", ErrMalformed, ed25519.SeedSize)
+	}
+	priv = ed25519.NewKeyFromSeed(seed)
+	if keyID(name, alg, publicKey(priv)) != id {
+		return "", 0, nil, fmt.Errorf("%w: the key id does not match the key", ErrMalformed)
+	}
+	return name, id, priv, nil
 }
 
 // publicKey is the public half of priv. An Ed25519 private key is its seed
@@ -220,12 +247,7 @@ func GenerateKey(rand io.Reader, name string) (skey, vkey string, err error) {
 	if _, err := io.ReadFull(rand, seed); err != nil {
 		return "", "", fmt.Errorf("note: reading a seed: %w", err)
 	}
-	pub := publicKey(ed25519.NewKeyFromSeed(seed))
-	id := keyID(name, pub)
-	enc := base64.StdEncoding.EncodeToString
-	skey = fmt.Sprintf("PRIVATE+KEY+%s+%08x+%s", name, id, enc(append([]byte{algEd25519}, seed...)))
-	vkey = fmt.Sprintf("%s+%08x+%s", name, id, enc(append([]byte{algEd25519}, pub...)))
-	return skey, vkey, nil
+	return encodeKeyPair(name, algEd25519, seed), encodeVerifier(name, algEd25519, seed), nil
 }
 
 // KeySigner is what Sign needs: a named key that signs. *Signer is one, and so
@@ -282,11 +304,12 @@ func Sign(text []byte, signers ...KeySigner) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// Note is an opened note: its text, and the trusted keys whose signatures
-// verified.
+// Note is an opened note: its text, the trusted log keys whose signatures
+// verified, and the trusted witnesses whose cosignatures verified.
 type Note struct {
-	Text     []byte
-	SignedBy []*Verifier
+	Text         []byte
+	SignedBy     []*Verifier
+	Cosignatures []Cosignature
 }
 
 type sigLine struct {
@@ -311,12 +334,25 @@ func Open(msg []byte, trusted []*Verifier) (*Note, error) {
 		return nil, err
 	}
 
-	// A key appears once in SignedBy however many of its lines verify: a line
-	// repeated verbatim adds nothing (SPEC §5.4).
-	var signedBy []*Verifier
+	// A key appears once however many of its lines verify: a line repeated
+	// verbatim adds nothing (SPEC §5.4).
+	var (
+		signedBy []*Verifier
+		cosigs   []Cosignature
+	)
 	for _, l := range lines {
 		v := find(trusted, l.name, l.id)
 		if v == nil {
+			continue
+		}
+		if v.Witness() {
+			at, ok := verifyCosignature(v, text, l.sig)
+			if !ok {
+				return nil, fmt.Errorf("%w: witness %s+%08x", ErrBadSignature, l.name, l.id)
+			}
+			if !cosignedBy(cosigs, v) {
+				cosigs = append(cosigs, Cosignature{Witness: v, Time: at})
+			}
 			continue
 		}
 		if len(l.sig) != ed25519.SignatureSize || !ed25519.Verify(v.pub, text, l.sig) {
@@ -326,10 +362,12 @@ func Open(msg []byte, trusted []*Verifier) (*Note, error) {
 			signedBy = append(signedBy, v)
 		}
 	}
+	// A cosignature alone is not a signature of the note: a witness vouches
+	// for consistency, never for the log's content (ADR-0021).
 	if len(signedBy) == 0 {
 		return nil, ErrUnknownKey
 	}
-	return &Note{Text: bytes.Clone(text), SignedBy: signedBy}, nil
+	return &Note{Text: bytes.Clone(text), SignedBy: signedBy, Cosignatures: cosigs}, nil
 }
 
 // parseEnvelope is SPEC §5.4 step 1: everything decided before a key is looked

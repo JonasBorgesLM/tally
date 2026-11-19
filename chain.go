@@ -31,6 +31,7 @@ const (
 	HeartbeatGap
 	PrunedWithoutTrustedCheckpoint
 	UnattestedTail
+	UnwitnessedTail
 )
 
 func (k FailureKind) String() string {
@@ -63,6 +64,8 @@ func (k FailureKind) String() string {
 		return "PrunedWithoutTrustedCheckpoint"
 	case UnattestedTail:
 		return "UnattestedTail"
+	case UnwitnessedTail:
+		return "UnwitnessedTail"
 	default:
 		return fmt.Sprintf("FailureKind(%d)", uint8(k))
 	}

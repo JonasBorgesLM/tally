@@ -60,6 +60,10 @@ type Report struct {
 	// checkpoint covers, which a rewrite of the tail would leave undetected
 	// even without the key (T-01).
 	UnattestedEntries uint64
+	// WitnessedSize is the largest size matched by a checkpoint that a quorum
+	// of the trusted witnesses cosigned (WithWitnesses, ADR-0021), or 0. It
+	// is at most AttestedSize.
+	WitnessedSize uint64
 	// Failures lists every violation, the first record-level one included.
 	Failures []Failure
 }
@@ -82,10 +86,13 @@ type Failure struct {
 type VerifyOption func(*verifyConfig)
 
 type verifyConfig struct {
-	start       SignedCheckpoint
-	requireFull bool
-	anchor      AnchorReader
-	heartbeat   *heartbeat
+	start            SignedCheckpoint
+	requireFull      bool
+	anchor           AnchorReader
+	heartbeat        *heartbeat
+	witnesses        []*note.Verifier
+	quorum           int
+	requireWitnessed bool
 }
 
 // heartbeat is WithHeartbeat's input.
@@ -140,6 +147,30 @@ func WithRequireFullyAttested() VerifyOption {
 	return func(c *verifyConfig) { c.requireFull = true }
 }
 
+// WithWitnesses trusts the given witnesses' cosignatures (ADR-0021, #61):
+// c2sp.org/tlog-cosignature's cosignature/v1, from keys of type 0x04. A
+// checkpoint that the log's key signed and that at least quorum of them
+// cosigned is witnessed, and Report.WitnessedSize is the largest one matched
+// against the log. A bad cosignature from one of them is BadSignature, as a
+// bad log signature is. Verify returns an error, not a report, if a key is
+// not a witness's or quorum is not between 1 and the number of witnesses.
+//
+// A witness cosigns a checkpoint only if it is consistent with every other
+// it cosigned for the log, so a fork shown to one auditor and not the other
+// lacks the cosignature: that is what WithRequireWitnessed turns into a
+// violation (T-09). It holds only as far as the witnesses are honest and
+// apart from the log's host; one witness is one party to trust.
+func WithWitnesses(witnesses Verifiers, quorum int) VerifyOption {
+	return func(c *verifyConfig) { c.witnesses, c.quorum = witnesses.keys, quorum }
+}
+
+// WithRequireWitnessed makes the leaves past the last witnessed checkpoint a
+// failure, UnwitnessedTail (ADR-0021): every leaf read must be under a
+// checkpoint a quorum of the witnesses cosigned. It needs WithWitnesses.
+func WithRequireWitnessed() VerifyOption {
+	return func(c *verifyConfig) { c.requireWitnessed = true }
+}
+
 // checkpoint is an accepted checkpoint (SPEC §5.4 step 5).
 type checkpoint struct {
 	origin string
@@ -151,8 +182,10 @@ type checkpoint struct {
 	closed  bool
 	hasHead bool
 	// root is set when hasRoot: a tlog-checkpoint or a heartbeat note.
-	root     [32]byte
-	hasRoot  bool
+	root    [32]byte
+	hasRoot bool
+	// cosigned is how many trusted witnesses cosigned it (ADR-0021).
+	cosigned int
 	start    bool // the caller's start checkpoint
 	anchored bool // read from an anchor
 }
@@ -168,8 +201,8 @@ func mismatchKind(c checkpoint) FailureKind {
 
 // readCheckpoint applies SPEC §5.4. It returns the accepted checkpoint, or the
 // Failure that rejects it.
-func readCheckpoint(cp SignedCheckpoint, keys Verifiers) (checkpoint, *Failure) {
-	n, err := note.Open(cp, keys.keys)
+func readCheckpoint(cp SignedCheckpoint, keys Verifiers, witnesses []*note.Verifier) (checkpoint, *Failure) {
+	n, err := note.Open(cp, append(slices.Clone(keys.keys), witnesses...))
 	if err != nil {
 		kind := MalformedRecord
 		switch {
@@ -186,6 +219,11 @@ func readCheckpoint(cp SignedCheckpoint, keys Verifiers) (checkpoint, *Failure) 
 	if f != nil {
 		return checkpoint{}, f
 	}
+	for _, cs := range n.Cosignatures {
+		if slices.Contains(witnesses, cs.Witness) {
+			c.cosigned++
+		}
+	}
 	for _, v := range n.SignedBy {
 		if v.Name() != c.origin {
 			return checkpoint{}, &Failure{Kind: MalformedRecord, Seq: c.size,
@@ -200,7 +238,7 @@ func readCheckpoint(cp SignedCheckpoint, keys Verifiers) (checkpoint, *Failure) 
 // It says nothing about any log: whether cp agrees with one is Verify's
 // question (FromCheckpoint, WithAnchor).
 func VerifyCheckpoint(cp SignedCheckpoint, keys Verifiers) error {
-	if _, f := readCheckpoint(cp, keys); f != nil {
+	if _, f := readCheckpoint(cp, keys, nil); f != nil {
 		return fmt.Errorf("tally: checkpoint not accepted: %v: %s", f.Kind, f.Note)
 	}
 	return nil
@@ -346,12 +384,15 @@ func Verify(ctx context.Context, src Source, keys Verifiers, opts ...VerifyOptio
 		o(&cfg)
 	}
 	rep := &Report{}
+	if err := checkWitnesses(&cfg); err != nil {
+		return nil, err
+	}
 
 	// Step 1: read every checkpoint; set aside those not accepted.
 	var cps []checkpoint
 	var start *checkpoint
 	if cfg.start != nil {
-		c, f := readCheckpoint(cfg.start, keys)
+		c, f := readCheckpoint(cfg.start, keys, cfg.witnesses)
 		if f != nil {
 			return nil, fmt.Errorf("%w: %v: %s", ErrUntrustedStart, f.Kind, f.Note)
 		}
@@ -388,7 +429,7 @@ func Verify(ctx context.Context, src Source, keys Verifiers, opts ...VerifyOptio
 			if err != nil {
 				return nil, fmt.Errorf("tally: reading checkpoints: %w", err)
 			}
-			c, f := readCheckpoint(raw, keys)
+			c, f := readCheckpoint(raw, keys, cfg.witnesses)
 			if f != nil {
 				rep.Failures = append(rep.Failures, *f)
 				continue
@@ -601,11 +642,23 @@ func Verify(ctx context.Context, src Source, keys Verifiers, opts ...VerifyOptio
 		}
 	}
 	rep.UnattestedEntries = rep.Size - rep.AttestedSize
+	if len(cfg.witnesses) > 0 {
+		for i, c := range cps {
+			if matched[i] && c.cosigned >= cfg.quorum && c.size > rep.WitnessedSize {
+				rep.WitnessedSize = c.size
+			}
+		}
+	}
 
 	// Step 10: full attestation, if required (ADR-0018).
 	if cfg.requireFull && rep.UnattestedEntries > 0 {
 		rep.Failures = append(rep.Failures, Failure{Kind: UnattestedTail, Seq: rep.AttestedSize,
 			Note: fmt.Sprintf("%d leaves past the last trusted checkpoint", rep.UnattestedEntries)})
+	}
+	// Step 11: witnessed, if required (ADR-0021).
+	if cfg.requireWitnessed && rep.Size > rep.WitnessedSize {
+		rep.Failures = append(rep.Failures, Failure{Kind: UnwitnessedTail, Seq: rep.WitnessedSize,
+			Note: fmt.Sprintf("%d leaves past the last checkpoint %d of the trusted witnesses cosigned", rep.Size-rep.WitnessedSize, cfg.quorum)})
 	}
 	return rep, nil
 }
@@ -740,4 +793,24 @@ func forks(cps []checkpoint, origin string) []Failure {
 		lo = hi
 	}
 	return out
+}
+
+// checkWitnesses rejects a witness configuration that cannot be right: it is
+// a misuse, so an error rather than a report.
+func checkWitnesses(cfg *verifyConfig) error {
+	if cfg.requireWitnessed && len(cfg.witnesses) == 0 {
+		return errors.New("tally: WithRequireWitnessed needs WithWitnesses")
+	}
+	if len(cfg.witnesses) == 0 {
+		return nil
+	}
+	if cfg.quorum < 1 || cfg.quorum > len(cfg.witnesses) {
+		return fmt.Errorf("tally: a witness quorum of %d out of %d witnesses", cfg.quorum, len(cfg.witnesses))
+	}
+	for _, w := range cfg.witnesses {
+		if !w.Witness() {
+			return fmt.Errorf("tally: %s+%08x is not a witness's key: a witness signs cosignature/v1 (type 0x04)", w.Name(), w.KeyHash())
+		}
+	}
+	return nil
 }
