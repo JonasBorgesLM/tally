@@ -176,7 +176,7 @@ func cmdWitnessPush(ctx context.Context, args []string, stdout, stderr io.Writer
 	switch status {
 	case http.StatusOK:
 	case http.StatusUnprocessableEntity:
-		(&output{w: stderr}).printf("tally witness push: the witness refused the log's history: %s", sanitize(string(body)))
+		(&output{w: stderr}).printf("tally witness push: the witness refused the log's history: %s\n", sanitize(strings.TrimSpace(string(body))))
 		return exitViolation
 	default:
 		return fail(stderr, fmt.Errorf("the witness answered %d: %s", status, sanitize(strings.TrimSpace(string(body)))))

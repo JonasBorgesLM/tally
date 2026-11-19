@@ -112,8 +112,8 @@ as T-01. Found by the clean-session audit (A-01).
 
 ### T-09 — Split view
 **Actor:** host attacker. **Impact:** different auditors see different histories.
-**Mitigation:** none in v0.1. Witnesses in M11.
-**Residual:** **not detected in v0.1,** unless auditors compare notes or all read one anchor that cannot itself equivocate.
+**Mitigation:** a witness on another machine (ADR-0021, #61) cosigns a `tlog-checkpoint` only when a consistency proof ties it to the last one it cosigned, so it cosigns one history per log. A verifier that requires it (`WithRequireWitnessed`, `tally verify --require-witnessed`) reports any leaf past the last witnessed checkpoint as `UnwitnessedTail`: a fork shown to that verifier lacks the cosignature. Run against a Raspberry Pi 5 as the witness (RUNBOOK, "A witness on a second machine"): the fork was refused by the witness and convicted by the verifier.
+**Residual:** **partial.** Detected only by a verifier that requires the witness: one that accepts uncosigned checkpoints can still be shown a fork, which each anchor of its own accepts. One witness is one party to trust: a witness that colludes with the host, or whose key leaks with the log's, cosigns a fork; a quorum of independent witnesses narrows that, and the demo has one. A witness that loses its state can be reset to accept a fork from that point, and nothing shows the gap. Auditors comparing notes, or one anchor that cannot equivocate, still catch it without a witness.
 
 ### T-10 — Splice across logs
 **Actor:** host attacker. **Impact:** one log's entries pass as another's.
@@ -198,7 +198,7 @@ crash can leave, are debris and not frames: a frame of length 0 is not one (SPEC
 | T-06 | RF-06, RF-10, RS-01, RS-06, RS-07 |
 | T-07 | RF-09, RS-06, RS-17 |
 | T-08 | RF-09, RS-17 |
-| T-09 | — (M11) |
+| T-09 | RF-08 (ADR-0021) |
 | T-10 | RF-05, RF-08 |
 | T-11 | RF-04, RF-08, RF-17 |
 | T-12 | RF-20, RS-09, RS-10, RS-15 |
@@ -236,7 +236,8 @@ Stated plainly, since these are what someone would assume otherwise:
 - **One person controlling both the host and the anchor.** Separation of duties is
   operational; no library provides it.
 - **A deployment that ignores RS-17.** It will run, and report "intact", and mean much less.
-- **Split view in v0.1** (T-09).
+- **Split view for a verifier that does not require a witness**, or whose witnesses collude with the host
+  (T-09).
 - **Deleting the oldest history down to a segment boundary** (T-23). It looks exactly like a prune;
   only the anchor and the operator's records tell them apart.
 - **Real time.** No proof a checkpoint existed at the moment it claims (T-14).

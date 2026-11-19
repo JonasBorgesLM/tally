@@ -42,6 +42,77 @@ pair; segment 0 was the same bytes after, and `tally verify --anchor --require-f
 leaves attested. `tally checkpoint --tlog` printed the new `tlog-checkpoint`. The order of the upgrade, verifiers
 first, is a deployment step, not exercised.
 
+## A witness on a second machine
+
+A witness (ADR-0021) cosigns a log's `tlog-checkpoint` only when it is consistent with the last one it cosigned,
+so a host cannot get two histories witnessed (T-09). It runs on a machine that is not the log's host and holds no
+credential there: the host pushes to it, and it never connects back.
+
+1. **On the witness's machine**, as a user of its own, with the key made there and never copied off:
+
+   ```bash
+   sudo useradd -m witness
+   sudo -u witness sh -c 'umask 077; mkdir ~/state; tally keygen --witness --name witness.example --out ~/witness'
+   sudo -u witness tally witness serve --dir ~witness/state --key-file ~witness/witness.key \
+       --log "$(cat usher-0.pub)" --addr :7380
+   ```
+
+   Run `serve` under the service manager; it stops cleanly on SIGTERM. Give auditors `~witness/witness.pub`.
+   It serves plain HTTP: every body is signed both ways, so a man in the middle can delay, drop or replay, not
+   forge. Put it behind TLS before it leaves a network you trust.
+2. **On the log's host**, after each checkpoint (cron, or beside the application), push the newest
+   `tlog-checkpoint`:
+
+   ```bash
+   tally witness push --dir LOG --key-file trusted.keys --witness http://witness.example:7380 \
+       --witness-key "$(cat witness.pub)" --anchor /var/lib/usher/audit/anchor
+   ```
+
+   It learns the witness's size, builds the consistency proof from the log, checks the cosignature it gets
+   back, and publishes the cosigned checkpoint to the anchor spool, where the anchor pulls it. **Status 1 is an
+   incident**, never a retry:
+   - *the witness has cosigned more than this log holds*: the log was rolled back (T-08), or this is not the
+     history it witnessed;
+   - *the witness refused the log's history*: a fork (T-09), or a rewrite under the log's key (T-07);
+   - *a prune left it behind*: the log was pruned above the size the witness holds, and no proof reaches it.
+3. **The auditor requires it:**
+
+   ```bash
+   tally verify --dir LOG-COPY --key-file trusted.keys --anchor /srv/anchor \
+       --witness "$(cat witness.pub)" --require-witnessed
+   ```
+
+   `UnwitnessedTail` means leaves no witnessed checkpoint covers: entries since the last push, which the next
+   one covers, or a history the witness never saw.
+4. **Prune only at a checkpoint the witness cosigned**: the heartbeat note whose size is at most the size in the
+   newest cosigned `tlog-checkpoint` in the anchor. Pruning above the witness's size strands it (step 2's third
+   refusal), and a witness can only be moved past that by resetting its state by hand, after which it witnesses
+   only from that point.
+
+### Executed against
+
+`TestDrillWitnessOnASecondMachine`, against a Raspberry Pi 5 as the witness (`tally witness serve` under a
+`witness` user, its key generated on the Pi), with this Mac as the log's host, on 2026-11-19. An honest log was
+pushed twice and witnessed; a fork built from a copy of it, same genesis, same key, was pushed and refused:
+
+```
+$ tally witness push --dir log                  witnessed 7          status 0
+$ tally witness push --dir log                  witnessed 11         status 0
+$ tally witness push --dir fork
+  tally witness push: the witness refused the log's history: a different root at the size already witnessed
+                                                                     status 1
+$ tally verify --dir log --require-witnessed    witnessed 11  result intact        status 0
+$ tally verify --dir fork --require-witnessed   witnessed 0
+  violation UnwitnessedTail at 0: 11 leaves past the last checkpoint cosigned by a quorum of 1 trusted witnesses
+                                                result violated (1)  status 1
+```
+
+On the Pi, the `witness` user had no `~/.ssh` and no file but its own key (0600), and the Mac refused SSH from it:
+the witness held no credential on the host. The drill is skipped without `TALLY_DRILL_WITNESS_URL` and
+`TALLY_DRILL_WITNESS_KEY`. Resetting the witness's state between runs, the service manager and TLS are deployment
+steps, not exercised. The protocol and the refusals also run on every pull request against an in-process witness
+(`witness/witness_test.go`, `cmd/tally/witness_test.go`).
+
 ## Key rotation
 
 A log's checkpoints are signed with one key at a time (RS-06). Rotating replaces that key, for a

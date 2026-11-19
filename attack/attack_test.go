@@ -18,6 +18,7 @@ import (
 	"github.com/JonasBorgesLM/tally"
 	"github.com/JonasBorgesLM/tally/anchor"
 	"github.com/JonasBorgesLM/tally/filestore"
+	"github.com/JonasBorgesLM/tally/internal/note"
 	"github.com/JonasBorgesLM/tally/seal"
 	"github.com/JonasBorgesLM/tally/tallytest"
 )
@@ -135,10 +136,15 @@ func TestT06RewriteWithoutTheKey(t *testing.T) {
 }
 
 // T-09: split view. A host holding the key shows one auditor one history and
-// another a different one, each with its own anchor: each verifies. Only a
-// shared anchor or a witness (v0.2) tells them apart; the limit.
+// another a different one, each with its own anchor: each verifies, the
+// limit, for any verifier that does not require a witness. A shared anchor
+// makes the second a fork; and a witness (ADR-0021), which cosigned only the
+// history it was shown, makes the other UnwitnessedTail for a verifier that
+// requires it.
 //
-// The fork half was seen failing with the anchor not read by Verify.
+// The fork half was seen failing with the anchor not read by Verify; the
+// witness half, with Verify counting every checkpoint as cosigned
+// (TestTheWitnessedSize's control).
 func TestT09SplitView(t *testing.T) {
 	a := writeLog(t, tallytest.TestSignerKey, 0x53, ids(4, "a"), 2)
 	b := writeLog(t, tallytest.TestSignerKey, 0x53, ids(4, "b"), 2)
@@ -146,6 +152,39 @@ func TestT09SplitView(t *testing.T) {
 	undetected(t, verify(t, b, tally.WithAnchor(anchorList(b.cps)), tally.WithRequireFullyAttested()))
 	// With one anchor for both, the second is a fork.
 	detected(t, verify(t, b, tally.WithAnchor(anchorList(a.cps))), tally.ForkDetected)
+
+	// A witness was shown a, and cosigned its newest tlog-checkpoint.
+	wsk, wvk, err := note.GenerateCosignerKey(bytes.NewReader(bytes.Repeat([]byte{0x77}, 32)), "witness.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := note.NewCosigner(wsk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	witnesses, err := tally.NewVerifiers(wvk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var newest tally.SignedCheckpoint
+	for _, cp := range a.cps {
+		if text, _, _ := strings.Cut(string(cp), "\n\n"); len(strings.Split(text, "\n")) == 3 {
+			newest = cp
+		}
+	}
+	text, _, _ := strings.Cut(string(newest), "\n\n")
+	line, err := note.Cosign([]byte(text+"\n"), w, time.Unix(1_790_000_000, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.cps = append(a.cps, append(slices.Clone(newest), line...))
+	b.cps = append(b.cps, a.cps[len(a.cps)-1]) // the host pastes a's cosigned checkpoint in too
+	required := []tally.VerifyOption{tally.WithWitnesses(witnesses, 1), tally.WithRequireWitnessed()}
+	undetected(t, verify(t, a, required...))
+	detected(t, verify(t, b, required...), tally.UnwitnessedTail)
+	// Without the requirement, b still verifies on its own anchor: the limit.
+	b.cps = b.cps[:len(b.cps)-1]
+	undetected(t, verify(t, b, tally.WithAnchor(anchorList(b.cps)), tally.WithWitnesses(witnesses, 1)))
 }
 
 // T-10: an entry spliced in from another log carries the other log_id.

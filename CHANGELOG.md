@@ -10,6 +10,10 @@ The release workflow will refuse to publish a tag with no section here.
 
 ### Added
 
+- **A witness on a second machine, run** (#61): RUNBOOK gains "A witness on a second machine", executed against a
+  Raspberry Pi 5: the witness refused a fork of a witnessed log, same genesis and key, and the verifier requiring
+  it convicted the fork as `UnwitnessedTail`. T-09 moves from undetected to partial: detected by a verifier that
+  requires the witness, with the residual stated, and the attack suite asserts both halves.
 - **The witness** (#61, ADR-0021): package `witness`, a c2sp.org/tlog-witness `add-checkpoint` server that cosigns a
   log's `tlog-checkpoint` only when a consistency proof ties it to the last one it cosigned, and writes its state
   durably before it answers, under one lock with the size check. `tally witness serve` runs it on the witness's
