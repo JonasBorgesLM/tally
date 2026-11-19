@@ -8,6 +8,14 @@ The release workflow will refuse to publish a tag with no section here.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A witness quorum above 1 is met across notes** (audit A2-01). Each `tally witness push` publishes a note with
+  one witness's cosignature, and v0.2.0 counted cosignatures per note, so a quorum of 2 left an honest log
+  `UnwitnessedTail`. `Verify` now counts the distinct trusted witnesses that cosigned the same size and root,
+  across every accepted note. A witness counted twice is still one, and a cosignature of another root counts for
+  nothing.
+
 ## [0.2.0] - 2026-11-19
 
 M11: the Merkle tree over the leaves v0.1 already stored, checkpoints as `tlog-checkpoint` plus a heartbeat note,
