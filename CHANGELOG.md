@@ -10,6 +10,10 @@ The release workflow will refuse to publish a tag with no section here.
 
 ### Fixed
 
+- **`tally prune --witness-key` refuses a prune above what the witness cosigned** (audit A2-05). Pruning above the
+  witness's size left it no consistency proof to follow, so every later push failed until the witness was reset by
+  hand; the rule was a RUNBOOK line only. With the witness's key, `prune` reads the largest cosigned
+  `tlog-checkpoint` in the anchor and refuses, status 1, a checkpoint above it.
 - **The writer never signs a root over a planted range** (audit A2-03). On a log v0.1 pruned, which has no range and
   no root, a `pruned.range` the host wrote was adopted on reopen, and the log's own key then signed a root over a
   prefix nothing had checked. A stored range is now used only when the last stored checkpoint's root, at or above

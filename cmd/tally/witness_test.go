@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -128,5 +129,69 @@ func TestWitnessPushAfterAPruneThatLeftItBehind(t *testing.T) {
 	out, stderr, code := push()
 	if code != exitViolation || !strings.Contains(stderr, "prune left it behind") {
 		t.Fatalf("a push the prune left behind: %d\n%s%s", code, out, stderr)
+	}
+}
+
+// tally prune --witness-key refuses a prune above what the witness cosigned
+// in the anchor, which would leave it no proof to follow (ADR-0021, audit
+// A2-05), and removes nothing; at a size the witness cosigned, it prunes.
+//
+// Negative control: with the size check removed, the prune above the witness
+// ran, status 0. Verified by hand, restored before committing.
+func TestPruneRefusesAboveTheWitness(t *testing.T) {
+	url, wvk := witnessServer(t)
+	root := t.TempDir()
+	dir, spool := filepath.Join(root, "log"), filepath.Join(root, "spool")
+	if err := os.Mkdir(spool, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	key := tallytest.TestVerifierKey
+	writeLog(t, dir, spool, "a", 12, true)
+	out, stderr, code := cli(t, "witness", "push", "--dir", dir, "--key", key, "--witness", url, "--witness-key", wvk, "--anchor", spool)
+	if code != exitIntact {
+		t.Fatalf("push: %d\n%s%s", code, out, stderr)
+	}
+	witnessedSize, err := strconv.ParseUint(line(t, out, "witnessed"), 10, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeLog(t, dir, spool, "b", 20, true)
+
+	a, err := anchor.NewDir(spool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var newest, early tally.SignedCheckpoint
+	for cp, err := range a.Checkpoints(context.Background()) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		if isTlog(cp) || !strings.Contains(string(cp), "\ntally-heartbeat/v1\n") {
+			continue
+		}
+		size, serr := tally.CheckpointSize(cp)
+		if serr != nil {
+			t.Fatal(serr)
+		}
+		if size <= witnessedSize {
+			early = cp // the largest heartbeat note the witness's size covers
+		}
+		newest = cp
+	}
+	if early == nil || newest == nil {
+		t.Fatal("the anchor holds no heartbeat notes to prune at")
+	}
+	before := segments(t, dir)
+	_, stderr, code = cli(t, "prune", "--dir", dir, "--key", key, "--anchor", spool,
+		"--checkpoint", writeCheckpoint(t, newest), "--witness-key", wvk)
+	if code != exitViolation || !strings.Contains(stderr, "the witness has cosigned") {
+		t.Fatalf("a prune above the witness: %d\n%s", code, stderr)
+	}
+	if after := segments(t, dir); len(after) != len(before) {
+		t.Fatalf("a refused prune removed segments: %v -> %v", before, after)
+	}
+	if _, stderr, code = cli(t, "prune", "--dir", dir, "--key", key, "--anchor", spool,
+		"--checkpoint", writeCheckpoint(t, early), "--witness-key", wvk); code != exitIntact {
+		t.Fatalf("a prune at a size the witness cosigned: %d\n%s", code, stderr)
 	}
 }
