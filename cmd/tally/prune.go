@@ -29,6 +29,7 @@ func cmdPrune(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	keys := keyFlags(flags)
 	anchorDir := flags.String("anchor", "", "the anchor, which must hold the checkpoint")
 	cpFile := flags.String("checkpoint", "", "the checkpoint to prune at, a signed note")
+	witnessKey := flags.String("witness-key", "", "a witness's verifier key: refuse to prune above what it cosigned in the anchor (ADR-0021)")
 	if err := flags.Parse(args); err != nil {
 		return exitError
 	}
@@ -61,6 +62,24 @@ func cmdPrune(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		(&output{w: stderr}).printf("tally prune: refused: the checkpoint is not in the anchor; " +
 			"pruning below a checkpoint that never left the host destroys the evidence it would protect (RS-20)\n")
 		return exitViolation
+	}
+	if *witnessKey != "" {
+		size, serr := tally.CheckpointSize(cp)
+		if serr != nil {
+			return fail(stderr, serr)
+		}
+		witnessed, werr := witnessedInAnchor(ctx, *anchorDir, verifiers, *witnessKey)
+		if werr != nil {
+			return fail(stderr, werr)
+		}
+		// A consistency proof from the witness's size needs that size at or
+		// above the first record a prune keeps; pruning at a size the witness
+		// has cosigned guarantees it (ADR-0021, audit A2-05).
+		if size > witnessed {
+			(&output{w: stderr}).printf("tally prune: refused: the checkpoint covers %d leaves and the witness has cosigned %d in the anchor; "+
+				"pruning above it would leave the witness no proof to follow\n", size, witnessed)
+			return exitViolation
+		}
 	}
 
 	s, err := filestore.Open(ctx, *dir)
@@ -124,4 +143,33 @@ func inAnchor(ctx context.Context, dir string, cp tally.SignedCheckpoint) (bool,
 		}
 	}
 	return false, nil
+}
+
+// witnessedInAnchor is the largest size of a tlog-checkpoint in the anchor
+// that the log's keys signed and the witness cosigned, or 0.
+func witnessedInAnchor(ctx context.Context, dir string, keys tally.Verifiers, witnessKey string) (uint64, error) {
+	wkeys, err := tally.NewVerifiers(witnessKey)
+	if err != nil {
+		return 0, fmt.Errorf("--witness-key: %w", err)
+	}
+	a, err := anchor.NewDir(dir)
+	if err != nil {
+		return 0, err
+	}
+	var witnessed uint64
+	for held, err := range a.Checkpoints(ctx) {
+		if err != nil {
+			return 0, err
+		}
+		if !isTlog(held) {
+			continue
+		}
+		if n, cerr := tally.CountCosignatures(held, keys, wkeys); cerr != nil || n < 1 {
+			continue
+		}
+		if size, serr := tally.CheckpointSize(held); serr == nil && size > witnessed {
+			witnessed = size
+		}
+	}
+	return witnessed, nil
 }
