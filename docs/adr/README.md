@@ -38,6 +38,7 @@ when M1 to M6 implement it gets an amendment.
 | [`0018`](0018-unattested-tail-is-a-violation-kind.md) | Requiring full attestation reports UnattestedTail, a violation kind of its own | Accepted | — |
 | [`0019`](0019-segments-rotate-only-at-a-stored-checkpoint.md) | A file store rotates segments only after storing a checkpoint that covers every record | Accepted | — |
 | [`0020`](0020-vault-file-per-subject-and-kek-rewrap.md) | The file vault keeps one file per subject, behind a KEK interface, and rotates by rewrapping each file | Accepted | — |
+| [`0021`](0021-a-c2sp-witness-on-another-machine.md) | A c2sp tlog-witness on another machine cosigns consistent checkpoints, and verifiers can require it | Accepted | — |
 
 ## Reopening criteria on the record
 
@@ -49,6 +50,7 @@ Decisions carrying an explicit trigger, so "revisit later" is not a synonym for 
 | [`0006`](0006-anchor-and-heartbeat-in-the-mvp.md) | The time source at v0.2, when tlog-checkpoint removes the time line: decide in #60, between witness cosignature timestamps and a separate signed heartbeat note. |
 | [`0009`](0009-poison-on-io-error-no-interval-durability.md) | If a filesystem or kernel offers a reliable way to learn what reached disk after a failed fsync. |
 | [`0015`](0015-signer-in-process-behind-an-interface.md) | When a real deployment holds an application whose compromise is credibly below root, such that a signer process changes the outcome, or when an audit finding asks for it. |
+| [`0021`](0021-a-c2sp-witness-on-another-machine.md) | ML-DSA-44 when the module's floor reaches Go 1.27, which RNF-01 allows once Go 1.28 is out; a second witness when the demo gains a third machine. |
 
 ## Open questions
 
