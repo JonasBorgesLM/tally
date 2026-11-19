@@ -10,6 +10,13 @@ The release workflow will refuse to publish a tag with no section here.
 
 ### Added
 
+- **Witness cosignatures in `Verify`** (#61, ADR-0021): `WithWitnesses(keys, quorum)` trusts c2sp.org/tlog-cosignature
+  `cosignature/v1` cosignatures from witness keys (type `0x04`); `Report.WitnessedSize` is the largest matched
+  checkpoint a quorum cosigned, and `WithRequireWitnessed` makes the rest `UnwitnessedTail`, a new violation kind,
+  where split view (T-09) shows. A bad cosignature from a trusted witness is `BadSignature`, and a note signed only
+  by a witness is `UnknownKey`. `tally verify` gains `--witness`, `--witness-quorum` and `--require-witnessed`.
+  SPEC §5.5, and `testdata/vectors/witness.json`, checked against `transparency-dev/formats`.
+
 - The RFC 6962 Merkle tree over the existing leaves, with inclusion and consistency proofs (#59, ADR-0002). A
   v0.1 log needs nothing rewritten. It is internal until checkpoints carry its root (#60).
 - **CLI for v0.2** (#60): `tally head` prints the Merkle root, from leaf 0 or the pruned range, or says it is

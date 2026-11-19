@@ -461,6 +461,10 @@ The `key_id` in the string MUST equal the one computed from the name and key. Th
 the matching signer encoding, `PRIVATE+KEY+<name>+<key_id hex>+<base64(0x01 || 32-byte seed)>`, at
 mode 0600. Both are the encodings `golang.org/x/mod/sumdb/note` reads and writes.
 
+A witness's key (§5.5) has the same encodings with the type byte `0x04` in place of `0x01`, and its
+`key_id` is `SHA-256(name || 0x0A || 0x04 || public key)[:4]`. A key of type `0x04` never signs a note as a
+log: it only cosigns.
+
 Reading a checkpoint (§5.4) does not depend on the log: a trusted key for another log can produce an
 accepted checkpoint, and §7 step 5 then reports that it names another `origin`. This keeps §5.4 usable
 before the log's `origin` is known, which, when genesis was not read, comes from the checkpoints
@@ -478,9 +482,27 @@ Each checkpoint is read in this order, and the first matching outcome applies:
    this is `golang.org/x/mod/sumdb/note`'s behaviour. Repeated identical lines from one key count once.
 3. No signature line verifies under a trusted key: `UnknownKey`. Signatures from unknown keys are
    otherwise ignored.
+   A trusted witness's cosignature (§5.5) that does not verify is `BadSignature` too. A cosignature is never
+   a signature of the note: a note whose only verified signatures are cosignatures is `UnknownKey`.
 4. The body does not parse (§5.2), or its `origin` differs from the name of any trusted key whose signature
    verified: `MalformedRecord`. Non-canonical base64 in a hash line is `NonCanonicalEncoding`.
 5. Otherwise the checkpoint is **accepted**, and only an accepted checkpoint takes part in §7.
+
+### 5.5 Witness cosignatures
+
+A witness (ADR-0021) cosigns a `tlog-checkpoint` with c2sp.org/tlog-cosignature's `cosignature/v1` over
+Ed25519: one more signature line on the note, from a key of type `0x04` (§5.3). It signs the message
+
+```
+cosignature/v1
+time <unix seconds, ASCII decimal>
+<the checkpoint's text, as signed by the log>
+```
+
+and the line's bytes after the `key_id` are the time as 8 bytes big-endian, then the 64-byte signature. The
+time MUST fit in an int64. A cosignature says the witness found the checkpoint consistent with every other it
+cosigned for that `origin`, as the largest it had seen at that time; the witness protocol is
+c2sp.org/tlog-witness. The time is the witness's claim, and §7 does not judge it.
 
 ## 6. Limits
 
@@ -513,12 +535,15 @@ starts are judged.
 - optionally, checkpoints read from an anchor, and other checkpoints, each marked as from an anchor or not;
 - optionally, a heartbeat interval `T`, a `tolerance` and the current time, all supplied by the caller.
   The format sets no default for any of them;
-- optionally, a requirement that the whole log be attested (RF-18, ADR-0018).
+- optionally, a requirement that the whole log be attested (RF-18, ADR-0018);
+- optionally, trusted witness keys (§5.5) and a quorum between 1 and their number, and a requirement that the
+  whole log be witnessed (ADR-0021).
 
 **Error, not violation.** The result is an `error`, never a report, when verification is not possible:
 an IO error, no segment file, a start checkpoint that is not accepted (§5.4) or that has no head (a
-`tlog-checkpoint`: start from the heartbeat note of its size instead), or, with genesis not read,
-accepted checkpoints naming more than one `origin` (step 3).
+`tlog-checkpoint`: start from the heartbeat note of its size instead), a witness key that is not of type
+`0x04` or a quorum outside 1 to the number of witnesses, a witness requirement without witnesses, or, with
+genesis not read, accepted checkpoints naming more than one `origin` (step 3).
 
 **Steps:**
 
@@ -592,10 +617,15 @@ accepted checkpoints naming more than one `origin` (step 3).
    signer's own claims (ADR-0006).
 9. **Result.** `AttestedSize` is the largest `size` among matched checkpoints, or 0 if none matched. It never
    exceeds `Size`. `UnattestedEntries = Size - AttestedSize`, counted in leaves: with nothing attested,
-   genesis is among them.
+   genesis is among them. With witnesses, `WitnessedSize` is the largest `size` among matched checkpoints
+   that at least the quorum of trusted witnesses cosigned, or 0.
 10. **Full attestation, if required.** If the caller required the whole log to be attested and
     `UnattestedEntries > 0`, that is `UnattestedTail`. Without the requirement, an unattested tail is not a
     violation: it is reported in `UnattestedEntries`, and §7.1 says what it means.
+11. **Witnessed, if required.** If the caller required the whole log to be witnessed and
+    `Size > WitnessedSize`, that is `UnwitnessedTail`. A fork shown to one verifier and not to the witness
+    lacks the witness's cosignature, so this is where split view (T-09) becomes a violation, for a verifier
+    that requires it.
 
 ### 7.1 What a result asserts
 
@@ -622,14 +652,15 @@ REQUIREMENTS is the one corrected. Every check in this document reports exactly 
 | `SeqGap` | A `seq` or header `first_seq` is greater than expected. |
 | `SeqRegression` | A `seq` or header `first_seq` is less than expected. |
 | `TimeRegression` | An entry's `recorded_at` decreases. A checkpoint's `recorded_at` is less than its head leaf's. `recorded_at` decreases across checkpoints (§7 step 6). |
-| `BadSignature` | A signature from a trusted key does not verify. |
+| `BadSignature` | A signature from a trusted key, or a cosignature from a trusted witness, does not verify. |
 | `UnknownKey` | A checkpoint has no signature from a trusted key (RF-10). |
 | `CheckpointMismatch` | A checkpoint not from an anchor disagrees with the log, or names another `origin`. |
-| `ForkDetected` | An anchor checkpoint disagrees with the log. Two accepted checkpoints of one `size` have different heads. |
+| `ForkDetected` | An anchor checkpoint disagrees with the log. Two accepted checkpoints of one `size` have different heads or roots. |
 | `TruncatedBelowCheckpoint` | A checkpoint's `size` exceeds a log read without violation. |
 | `HeartbeatGap` | §7 step 8. |
 | `PrunedWithoutTrustedCheckpoint` | §7 step 7. |
 | `UnattestedTail` | §7 step 10: full attestation was required, and `UnattestedEntries > 0`. |
+| `UnwitnessedTail` | §7 step 11: the whole log was required witnessed, and `Size > WitnessedSize`. |
 
 ## 8. Test vectors
 
@@ -648,7 +679,9 @@ is §4's sealing over a fixed DEK and nonce, for the `log_id`, `event_id` and `s
 sealed entry: the AAD and the payload, each as hex. [`merkle.json`](../testdata/vectors/merkle.json) is the
 §3.6 tree over the five leaves of `records.json`: every root, every inclusion and consistency proof in the tree of
 five, and the compact range below every start; [`pruned-range.json`](../testdata/vectors/pruned-range.json) is the
-`pruned.range` file for two of those ranges. Both are checked against `golang.org/x/mod/sumdb/tlog`. Conformance to §5 is tested
+`pruned.range` file for two of those ranges. Both are checked against `golang.org/x/mod/sumdb/tlog`.
+[`witness.json`](../testdata/vectors/witness.json) is a public test witness key (§5.5) and `checkpoints.json`'s
+`tlog-checkpoint` cosigned with it, checked against `github.com/transparency-dev/formats/note`. Conformance to §5 is tested
 against `golang.org/x/mod/sumdb/note` (#30). That package accepts up to 100 signatures and no size limit,
 so the differential test expects tally to reject notes it accepts above §6's limits, and never the
 reverse.

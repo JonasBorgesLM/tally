@@ -154,7 +154,8 @@ func TestAnHonestLogVerifies(t *testing.T) {
 // #27: every failure kind that needs no anchor and no full-attestation
 // requirement is produced by Verify itself. HeartbeatGap needs anchor
 // checkpoints and the caller's time (#29); UnattestedTail needs the
-// requirement, and TestRequireFullyAttested produces it.
+// requirement, and TestRequireFullyAttested produces it; UnwitnessedTail needs
+// witnesses, and TestSplitViewNeedsTheWitness produces it.
 func TestEveryKindIsProduced(t *testing.T) {
 	const at = "2026-11-10T12:00:00.000000000Z"
 

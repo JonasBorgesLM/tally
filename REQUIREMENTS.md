@@ -219,8 +219,9 @@ possible** (IO, misuse); an integrity violation is in the `Report` with
 Failure kinds: `PrevHashMismatch`, `SeqGap`, `SeqRegression`, `TimeRegression`,
 `NonCanonicalEncoding`, `MalformedRecord`, `BadSignature`, `UnknownKey`,
 `CheckpointMismatch`, `TruncatedBelowCheckpoint`, `ForkDetected`, `HeartbeatGap`,
-`PrunedWithoutTrustedCheckpoint`, and `UnattestedTail`, reported only under
-`WithRequireFullyAttested` (ADR-0018).
+`PrunedWithoutTrustedCheckpoint`, `UnattestedTail`, reported only under
+`WithRequireFullyAttested` (ADR-0018), and `UnwitnessedTail`, reported only under
+`WithRequireWitnessed` (ADR-0021).
 
 v0.2's `LeafHashMismatch` is removed: the leaf hash is not stored, so there is
 nothing to compare it with. A changed entry surfaces as `PrevHashMismatch` on its

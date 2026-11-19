@@ -130,6 +130,23 @@ The `pruned.range` file (SPEC §3.6) a prune writes when it keeps records from 3
 for the compact ranges of `merkle.json` with the same `start`. A writer produces these bytes, and a reader
 accepts nothing else.
 
+## `witness.json`
+
+A **public test witness key**, `witness.example`, made from the seed `20 21 … 3f`, in both encodings with type
+`0x04` (SPEC §5.3), and `checkpoints.json`'s `tlog-checkpoint` cosigned with it (§5.5) at `time`
+1790000000: `cosignature_line` is the line the witness adds, and `note` the cosigned note.
+
+To check an implementation: open `note` under `keys.json`'s log key and this witness key; the cosignature
+verifies, at `time`. Verifying `records.json` with it, trusting this witness, is witnessed to 5.
+`github.com/transparency-dev/formats/note` opens it too.
+
+Points that are easy to get wrong:
+
+- **The cosigned message is not the note's text.** It is `cosignature/v1`, then `time <seconds>`, then the
+  text.
+- **The key id hashes the type byte `0x04`**, not `0x01`: the same seed as a log key has another id.
+- **The signature bytes are the time, 8 bytes big-endian, then the Ed25519 signature**, after the key id.
+
 ## `seal.json`
 
 SPEC §4's sealing with every random input fixed: a DEK of `0x42` repeated and a nonce of `00 01 … 0b`, over

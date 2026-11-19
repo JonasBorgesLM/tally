@@ -35,7 +35,8 @@ seal ──▶ internal/fsx, internal/wire
 ```
 
 - The root imports only `internal/*`. `internal/*` imports nothing above it.
-- The module is stdlib only (RNF-01). `interop/` has its own `go.mod`, tests only, and may depend on `golang.org/x/mod`.
+- The module is stdlib only (RNF-01). `interop/` has its own `go.mod`, tests only, and may depend on `golang.org/x/mod`
+  and `github.com/transparency-dev/formats` (the witness cosignature, #61), each an independent implementation.
 - A new package gets added to `KNOWN` in `check-boundaries.sh`, or it fails.
 
 ## Commands

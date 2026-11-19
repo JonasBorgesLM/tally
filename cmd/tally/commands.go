@@ -136,6 +136,10 @@ func cmdVerify(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	from := fs.String("from", "", "a trusted checkpoint file to verify incrementally from (RF-08)")
 	heartbeat := fs.Duration("heartbeat", 0, "the heartbeat interval to check the anchor's checkpoints against")
 	tolerance := fs.Duration("tolerance", 0, "the slack allowed on --heartbeat")
+	var witnessKeys keyList
+	fs.Var(&witnessKeys, "witness", "a trusted witness's verifier key, cosignature/v1 (repeatable, ADR-0021)")
+	quorum := fs.Int("witness-quorum", 1, "how many of the --witness keys must cosign a checkpoint")
+	requireWitnessed := fs.Bool("require-witnessed", false, "make the leaves past the last witnessed checkpoint a violation (T-09)")
 	if err := fs.Parse(args); err != nil {
 		return exitError
 	}
@@ -183,24 +187,37 @@ func cmdVerify(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	if *heartbeat > 0 {
 		opts = append(opts, tally.WithHeartbeat(*heartbeat, *tolerance, time.Now()))
 	}
+	if len(witnessKeys) > 0 {
+		wv, werr := tally.NewVerifiers(witnessKeys...)
+		if werr != nil {
+			return fail(stderr, werr)
+		}
+		opts = append(opts, tally.WithWitnesses(wv, *quorum))
+	}
+	if *requireWitnessed {
+		opts = append(opts, tally.WithRequireWitnessed())
+	}
 
 	rep, err := tally.Verify(ctx, src, verifiers, opts...)
 	if err != nil {
 		(&output{w: stderr}).printf("tally verify: could not verify: %s\n", sanitize(err.Error()))
 		return exitError
 	}
-	return printReport(stdout, rep)
+	return printReport(stdout, rep, len(witnessKeys) > 0)
 }
 
 // printReport prints rep, one field per line, every log-derived value
 // sanitized, and returns the exit status it means. The verdict is the last
 // line, and no field can end a line early to forge one (RS-13).
-func printReport(w io.Writer, rep *tally.Report) int {
+func printReport(w io.Writer, rep *tally.Report, witnessed bool) int {
 	bw := bufio.NewWriter(w)
 	o := &output{w: bw}
 	o.printf("size %d\n", rep.Size)
 	o.printf("attested %d\n", rep.AttestedSize)
 	o.printf("unattested %d\n", rep.UnattestedEntries)
+	if witnessed {
+		o.printf("witnessed %d\n", rep.WitnessedSize)
+	}
 	for _, f := range rep.Failures {
 		o.printf("violation %s at %d: %s\n", sanitize(f.Kind.String()), f.Seq, sanitize(f.Note))
 	}
