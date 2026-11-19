@@ -392,6 +392,10 @@ The second line tells them apart: `tally-chain/v1`, `tally-heartbeat/v1`, or, in
 size. A v0.1 writer wrote the first; a v0.2 writer writes the other two, as a pair of one size (ADR-0006's
 amendment). A verifier accepts all three, in one log.
 
+**(writer)** A v0.2 writer stores and publishes the `tlog-checkpoint` before the heartbeat note of the same
+size, so the last checkpoint stored carries a time. Heartbeats at one size share one `tlog-checkpoint`, stored
+once. A log with no tree, pruned before pruned ranges existed (§3.6), keeps getting `tally-chain/v1`.
+
 **`tally-chain/v1`** (v0.1), six lines:
 
 ```

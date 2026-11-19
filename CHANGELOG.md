@@ -12,12 +12,19 @@ The release workflow will refuse to publish a tag with no section here.
 
 - The RFC 6962 Merkle tree over the existing leaves, with inclusion and consistency proofs (#59, ADR-0002). A
   v0.1 log needs nothing rewritten. It is internal until checkpoints carry its root (#60).
+- **The writer signs v0.2 checkpoints** (#60): each checkpoint is a `tlog-checkpoint` and a `tally-heartbeat/v1`
+  note of the same size, stored and published in that order. `Log.Checkpoint` returns the heartbeat note, which
+  names a head, so it serves `FromCheckpoint` and `Prune` as before; `tally prune` refuses a `tlog-checkpoint`
+  and says to use the heartbeat note of its size. Heartbeats at one size share one `tlog-checkpoint`, stored and
+  published once. A log pruned by v0.1, which has no tree, keeps getting `tally-chain/v1` checkpoints.
+  **The anchor queue counts notes:** the default of 64 holds 32 checkpoints, and a queue of 1 keeps only the
+  newest heartbeat note.
 - The v0.2 checkpoint bodies (ADR-0006's amendment, SPEC §5.2): a plain `tlog-checkpoint` (origin, size, Merkle
   root) and a `tally-heartbeat/v1` note (the v0.1 fields plus the root). `Verify` accepts them beside v0.1's
   `tally-chain/v1` in one log. It compares a root with the tree when it knows the tree: from leaf 0, or from a
   pruned range that `filestore.Reader` now also gives. Two notes of one size with different roots are a fork.
   A `tlog-checkpoint` carries no time, so it takes no part in the heartbeat, and it cannot be a start for
-  `FromCheckpoint`; the heartbeat note of its size can. Nothing writes the new bodies yet. Building the tree
+  `FromCheckpoint`; the heartbeat note of its size can. Building the tree
   costs `Verify` 13% on an Apple M1 (1.26M to 1.10M entries/s), still above RNF-03's 100k.
 - `tally.CompactRanger`, an optional interface a `Source` implements when it kept the compact range of what it
   pruned; `filestore.Store` does. A `Log` keeps the Merkle root of its leaves from it, or from leaf 0, so that

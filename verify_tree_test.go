@@ -230,3 +230,27 @@ func TestCheckpointSizeReadsEveryBody(t *testing.T) {
 		t.Fatalf("checked %d bodies, want 3", len(cases))
 	}
 }
+
+// A log as the writer stores it, a tlog-checkpoint beside every heartbeat
+// note, verifies with everything attested, on the host and through an anchor
+// holding both kinds, and so does an incremental run from a heartbeat note.
+func TestAWriterLogVerifiesWithItsPairs(t *testing.T) {
+	src := honestLog(t, 9, 3, 6)
+	if len(src.tlogs) != 3 || len(src.cps) != 3 {
+		t.Fatalf("the writer stored %d tlog-checkpoints and %d heartbeat notes, want 3 and 3 (sizes 4, 7, 10; Close shares 10)", len(src.tlogs), len(src.cps))
+	}
+	all := &sliceSource{recs: src.recs, cps: append(slices.Clone(src.tlogs), src.cps...)}
+	rep := verify(t, all, tally.WithRequireFullyAttested())
+	if !rep.OK() || rep.AttestedSize != 10 {
+		t.Fatalf("on the host: attested %d, %v", rep.AttestedSize, kinds(rep))
+	}
+	anchored := anchorList(slices.Clone(all.cps))
+	rep = verify(t, &sliceSource{recs: src.recs}, tally.WithAnchor(anchored), tally.WithRequireFullyAttested(),
+		tally.WithHeartbeat(time.Hour, time.Minute, time.Now()))
+	if !rep.OK() || rep.AttestedSize != 10 {
+		t.Fatalf("through an anchor with a heartbeat: attested %d, %v", rep.AttestedSize, kinds(rep))
+	}
+	if rep := verify(t, all, tally.FromCheckpoint(src.cps[0])); !rep.OK() {
+		t.Fatalf("incremental from the first heartbeat note: %v", kinds(rep))
+	}
+}

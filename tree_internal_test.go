@@ -1,6 +1,7 @@
 package tally
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"iter"
@@ -153,5 +154,60 @@ func TestTheLogStartsTheTreeFromAStoredRange(t *testing.T) {
 	}
 	if _, err := Open(ctx, prunedView{batchStore: store, from: 8, rangeAt: 5, hashes: rangeAt(5)}, signer); err == nil {
 		t.Error("a range below the first stored record was accepted")
+	}
+}
+
+// A log pruned before ranges existed has no tree, so it cannot sign a root:
+// its writer keeps signing tally-chain/v1 checkpoints, which verify as they
+// did, and no tlog-checkpoint (#60). With a tree, the writer signs the pair.
+//
+// Negative control: with the writer signing the pair whatever the tree,
+// Checkpoint on the log without a range returned a heartbeat note over a
+// zero root. Verified by hand, restored before committing.
+func TestALogWithoutATreeKeepsWritingV01Checkpoints(t *testing.T) {
+	ctx := context.Background()
+	signer := testSigner("example.com/log")
+	store := &batchStore{}
+	l, err := Open(ctx, store, signer, WithCheckpointEvery(0, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range 10 {
+		if _, err = l.Append(ctx, treeEvent(fmt.Sprintf("e%d", i))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = l.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	l2, err := Open(ctx, prunedView{batchStore: store, from: 5, noRange: true}, signer, WithCheckpointEvery(0, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cp, err := l2.Checkpoint(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = l2.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(cp, []byte("\n"+bodyChainV1+"\n")) {
+		t.Fatalf("without a tree, Checkpoint returned:\n%s\nwant a tally-chain/v1 checkpoint", cp)
+	}
+
+	l3, err := Open(ctx, store, signer, WithCheckpointEvery(0, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cp, err = l3.Checkpoint(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = l3.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(cp, []byte("\n"+bodyHeartbeatV1+"\n")) {
+		t.Fatalf("with a tree, Checkpoint returned:\n%s\nwant a tally-heartbeat/v1 note", cp)
 	}
 }

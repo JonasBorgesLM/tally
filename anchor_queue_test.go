@@ -138,25 +138,39 @@ func TestAFullQueueDropsTheOldestAndCountsIt(t *testing.T) {
 	ctx := context.Background()
 	a := blockedAnchor(true)
 	o := &anchorObserver{}
-	l := open(t, tallytest.NewMemStore(), tally.WithAnchors(a), tally.WithAnchorQueue(3),
+	mem := tallytest.NewMemStore()
+	l := open(t, mem, tally.WithAnchors(a), tally.WithAnchorQueue(3),
 		tally.WithCheckpointEvery(0, 0), tally.WithObserver(o), tally.WithMaxDelay(0))
 
-	cps := make([]tally.SignedCheckpoint, 0, 10)
 	for i := range 10 {
 		if _, err := l.Append(ctx, event(fmt.Sprint(i))); err != nil {
 			t.Fatal(err)
 		}
-		cp, err := l.Checkpoint(ctx)
-		if err != nil {
+		if _, err := l.Checkpoint(ctx); err != nil {
 			t.Fatal(err)
 		}
-		cps = append(cps, cp)
 		if i == 0 {
 			<-a.started // the first is in flight, still queued
 		}
 	}
-	// 10 into a queue of 3: 7 dropped, each reported, with a running count.
-	if want := []uint64{1, 2, 3, 4, 5, 6, 7}; !slices.Equal(o.dropped, want) {
+	// Each checkpoint is a pair, the tlog-checkpoint then the heartbeat note
+	// (#60), enqueued in the order they were stored: 20 notes.
+	var cps []tally.SignedCheckpoint
+	for cp, err := range mem.Checkpoints(ctx) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		cps = append(cps, cp)
+	}
+	if len(cps) != 20 {
+		t.Fatalf("stored %d notes, want 20", len(cps))
+	}
+	// 20 into a queue of 3: 17 dropped, each reported, with a running count.
+	want := make([]uint64, 17)
+	for i := range want {
+		want[i] = uint64(i + 1)
+	}
+	if !slices.Equal(o.dropped, want) {
 		t.Fatalf("reported drops %v, want %v", o.dropped, want)
 	}
 	for _, err := range o.errs {
@@ -167,7 +181,7 @@ func TestAFullQueueDropsTheOldestAndCountsIt(t *testing.T) {
 
 	close(a.release)
 	// Let the queue drain before Close: the closing checkpoint would
-	// otherwise, correctly, push out cps[7] if it were still queued.
+	// otherwise, correctly, push out cps[17] if it were still queued.
 	for deadline := time.Now().Add(10 * time.Second); len(a.got()) < 4; time.Sleep(time.Millisecond) {
 		if time.Now().After(deadline) {
 			t.Fatalf("published %d checkpoints before Close, want 4", len(a.got()))
@@ -178,12 +192,13 @@ func TestAFullQueueDropsTheOldestAndCountsIt(t *testing.T) {
 	}
 	got := a.got()
 	// The first was in flight when it was dropped; the last three, and then
-	// the closing checkpoint, follow.
-	want := append([]tally.SignedCheckpoint{cps[0]}, cps[7:]...)
-	if len(got) != len(want)+1 {
-		t.Fatalf("published %d checkpoints, want %d", len(got), len(want)+1)
+	// the closing heartbeat note, follow. Close adds no tlog-checkpoint: its
+	// size is the last one's.
+	wantCps := append([]tally.SignedCheckpoint{cps[0]}, cps[17:]...)
+	if len(got) != len(wantCps)+1 {
+		t.Fatalf("published %d checkpoints, want %d", len(got), len(wantCps)+1)
 	}
-	for i, cp := range want {
+	for i, cp := range wantCps {
 		if !bytes.Equal(got[i], cp) {
 			t.Errorf("published[%d] is not the expected checkpoint", i)
 		}
@@ -255,9 +270,11 @@ func TestAFailedPublicationIsReportedAndRetried(t *testing.T) {
 	if len(o.errs) != 2 || errors.Is(o.errs[0], tally.ErrAnchorQueueFull) {
 		t.Fatalf("reported %v, want the two failures", o.errs)
 	}
+	// The pair's tlog-checkpoint was queued first, so it is the one retried;
+	// the heartbeat note returned follows it.
 	got := a.got()
-	if len(got) < 1 || !bytes.Equal(got[0], cp) {
-		t.Fatalf("published %d checkpoints; the retried one first", len(got))
+	if len(got) < 2 || !isTlog(got[0]) || !bytes.Equal(got[1], cp) {
+		t.Fatalf("published %d checkpoints; want the retried tlog-checkpoint, then the note returned", len(got))
 	}
 }
 

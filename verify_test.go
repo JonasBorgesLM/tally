@@ -20,7 +20,12 @@ import (
 type sliceSource struct {
 	recs []tally.Record
 	cps  []tally.SignedCheckpoint
-	err  error // returned after the records, to simulate an IO failure
+	// tlogs holds the tlog-checkpoints the writer stored beside cps, which
+	// Checkpoints does not serve: tests that pick checkpoints by position
+	// pick among the timed ones (#60). TestAWriterLogVerifiesWithItsPairs
+	// verifies a log with both.
+	tlogs []tally.SignedCheckpoint
+	err   error // returned after the records, to simulate an IO failure
 }
 
 func (s *sliceSource) Records(_ context.Context, from uint64) iter.Seq2[tally.Record, error] {
@@ -88,9 +93,21 @@ func honestLog(t *testing.T, n int, cpAt ...int) *sliceSource {
 		if err != nil {
 			t.Fatal(err)
 		}
+		if isTlog(cp) {
+			src.tlogs = append(src.tlogs, cp)
+			continue
+		}
 		src.cps = append(src.cps, cp)
 	}
 	return src
+}
+
+// isTlog reports whether cp's body is a tlog-checkpoint: three lines, the
+// second a size, where a tally body has its name (SPEC §5.2).
+func isTlog(cp tally.SignedCheckpoint) bool {
+	text, _, ok := strings.Cut(string(cp), "\n\n")
+	lines := strings.Split(text, "\n")
+	return ok && len(lines) == 3 && !strings.HasPrefix(lines[1], "tally-")
 }
 
 // signedCheckpoint crafts a checkpoint body and signs it with skey.

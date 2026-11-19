@@ -15,7 +15,9 @@ import (
 )
 
 // prunable writes a log of 25 entries over many segments, with a checkpoint
-// every 4 entries, and returns the directory and its stored checkpoints.
+// every 4 entries, and returns the directory and its stored heartbeat notes:
+// the checkpoints a prune can start from (the tlog-checkpoints beside them
+// name no head).
 func prunable(t *testing.T) (string, []tally.SignedCheckpoint) {
 	t.Helper()
 	dir := logDir(t)
@@ -27,7 +29,9 @@ func prunable(t *testing.T) (string, []tally.SignedCheckpoint) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		cps = append(cps, cp)
+		if !isTlog(cp) {
+			cps = append(cps, cp)
+		}
 	}
 	if firsts := segmentFirsts(t, dir); len(firsts) < 4 {
 		t.Fatalf("segments %v: the test needs several", firsts)

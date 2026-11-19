@@ -12,15 +12,18 @@ import (
 	"time"
 
 	"github.com/JonasBorgesLM/tally"
+	"github.com/JonasBorgesLM/tally/internal/merkle"
 	"github.com/JonasBorgesLM/tally/internal/note"
 	"github.com/JonasBorgesLM/tally/tallytest"
 )
 
-// cpBody is a checkpoint opened under the published test key and split into
-// SPEC §5.2's six lines.
+// cpBody is a timed checkpoint opened under the published test key and split
+// into SPEC §5.2's lines: a tally-heartbeat/v1 note, as v0.2 writes, or a
+// tally-chain/v1 checkpoint, as a log with no tree does. root is empty in the
+// second.
 type cpBody struct {
-	origin, kind, head, at, state string
-	size                          uint64
+	origin, kind, head, root, at, state string
+	size                                uint64
 }
 
 var checkpointTime = regexp.MustCompile(`^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{9}Z$`)
@@ -36,16 +39,50 @@ func openCheckpoint(t *testing.T, cp tally.SignedCheckpoint) cpBody {
 		t.Fatalf("the checkpoint does not open under the test key: %v\n%s", err, cp)
 	}
 	lines := strings.Split(strings.TrimSuffix(string(n.Text), "\n"), "\n")
-	if len(lines) != 6 {
-		t.Fatalf("a checkpoint body has %d lines, want 6:\n%s", len(lines), n.Text)
+	switch {
+	case len(lines) == 7 && lines[1] == "tally-heartbeat/v1":
+		lines = []string{lines[0], lines[1], lines[2], lines[3], lines[5], lines[6], lines[4]}
+	case len(lines) == 6 && lines[1] == "tally-chain/v1":
+		lines = []string{lines[0], lines[1], lines[2], lines[3], lines[4], lines[5], ""} // no root
+	default:
+		t.Fatalf("not a timed checkpoint body, %d lines:\n%s", len(lines), n.Text)
 	}
 	size, err := strconv.ParseUint(lines[2], 10, 64)
 	if err != nil {
 		t.Fatalf("size line %q: %v", lines[2], err)
 	}
-	return cpBody{origin: lines[0], kind: lines[1], size: size, head: lines[3], at: lines[4], state: lines[5]}
+	return cpBody{origin: lines[0], kind: lines[1], size: size, head: lines[3], at: lines[4], state: lines[5], root: lines[6]}
 }
 
+// tlogBody is a tlog-checkpoint opened under the test key.
+type tlogBody struct {
+	origin, root string
+	size         uint64
+}
+
+func openTlog(t *testing.T, cp tally.SignedCheckpoint) (tlogBody, bool) {
+	t.Helper()
+	v, err := note.NewVerifier(tallytest.TestVerifierKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, err := note.Open(cp, []*note.Verifier{v})
+	if err != nil {
+		t.Fatalf("the checkpoint does not open under the test key: %v\n%s", err, cp)
+	}
+	lines := strings.Split(strings.TrimSuffix(string(n.Text), "\n"), "\n")
+	if len(lines) != 3 {
+		return tlogBody{}, false
+	}
+	size, err := strconv.ParseUint(lines[1], 10, 64)
+	if err != nil {
+		t.Fatalf("tlog size line %q: %v", lines[1], err)
+	}
+	return tlogBody{origin: lines[0], size: size, root: lines[2]}, true
+}
+
+// storedCheckpoints is every timed checkpoint the store holds, oldest first;
+// the tlog-checkpoints beside them are in storedTlogs.
 func storedCheckpoints(t *testing.T, mem *tallytest.MemStore) []cpBody {
 	t.Helper()
 	var out []cpBody
@@ -53,7 +90,25 @@ func storedCheckpoints(t *testing.T, mem *tallytest.MemStore) []cpBody {
 		if err != nil {
 			t.Fatal(err)
 		}
+		if _, ok := openTlog(t, cp); ok {
+			continue
+		}
 		out = append(out, openCheckpoint(t, cp))
+	}
+	return out
+}
+
+// storedTlogs is every tlog-checkpoint the store holds, oldest first.
+func storedTlogs(t *testing.T, mem *tallytest.MemStore) []tlogBody {
+	t.Helper()
+	var out []tlogBody
+	for cp, err := range mem.Checkpoints(context.Background()) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		if b, ok := openTlog(t, cp); ok {
+			out = append(out, b)
+		}
 	}
 	return out
 }
@@ -71,8 +126,9 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 	}
 }
 
-// SPEC §5.2: the body, line by line, signed by the log's key and over the
-// durable head.
+// SPEC §5.2: a v0.2 checkpoint is a pair, signed by the log's key over the
+// durable head: the tlog-checkpoint, stored first, and the heartbeat note,
+// returned, with the same size and the tree's root (ADR-0006's amendment).
 func TestACheckpointFollowsTheSpec(t *testing.T) {
 	mem := tallytest.NewMemStore()
 	l := open(t, mem)
@@ -88,15 +144,37 @@ func TestACheckpointFollowsTheSpec(t *testing.T) {
 	b := openCheckpoint(t, cp)
 	all := bodies(t, mem)
 	head := leaf(all[len(all)-1])
-	if b.origin != "example.com/log" || b.kind != "tally-chain/v1" || b.size != 3 ||
+	if b.origin != "example.com/log" || b.kind != "tally-heartbeat/v1" || b.size != 3 ||
 		b.head != base64.StdEncoding.EncodeToString(head[:]) || b.state != "open" {
 		t.Fatalf("checkpoint body %+v", b)
 	}
 	if !checkpointTime.MatchString(b.at) {
 		t.Fatalf("recorded_at %q is not SPEC §5.2's layout", b.at)
 	}
-	if mem.CheckpointCount() != 1 {
-		t.Fatalf("store holds %d checkpoints, want the one returned", mem.CheckpointCount())
+	leaves := make([][32]byte, 0, len(all))
+	for _, body := range all {
+		leaves = append(leaves, leaf(body))
+	}
+	root, err := merkle.Root(leaves)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.root != base64.StdEncoding.EncodeToString(root[:]) {
+		t.Fatalf("the heartbeat note's root %s is not the tree's", b.root)
+	}
+	var stored []tally.SignedCheckpoint
+	for c, err := range mem.Checkpoints(context.Background()) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		stored = append(stored, c)
+	}
+	if len(stored) != 2 || string(stored[1]) != string(cp) {
+		t.Fatalf("store holds %d checkpoints, want the tlog-checkpoint, then the note returned", len(stored))
+	}
+	tl, ok := openTlog(t, stored[0])
+	if !ok || tl.origin != b.origin || tl.size != 3 || tl.root != b.root {
+		t.Fatalf("the first stored is not the pair's tlog-checkpoint: %+v", tl)
 	}
 }
 
@@ -147,12 +225,19 @@ func TestAHeartbeatEveryPeriodEvenWithNoEntries(t *testing.T) {
 	for want := 1; want <= 2; want++ {
 		waitFor(t, "the heartbeat timer to be armed", func() bool { return clock.Timers() == 1 })
 		clock.Advance(time.Minute)
-		waitFor(t, "a heartbeat checkpoint", func() bool { return mem.CheckpointCount() == want })
+		waitFor(t, "a heartbeat checkpoint", func() bool { return len(storedCheckpoints(t, mem)) == want })
 	}
 	cps := storedCheckpoints(t, mem)
 	if cps[0].size != 1 || cps[1].size != 1 || cps[0].at != "2026-11-10T12:01:00.000000000Z" ||
 		cps[1].at != "2026-11-10T12:02:00.000000000Z" {
 		t.Fatalf("heartbeats %+v, want two over the genesis alone, a minute apart", cps)
+	}
+	// Two heartbeats of one size share their tlog-checkpoint, stored once.
+	//
+	// Negative control: with the writer storing the tlog-checkpoint on every
+	// checkpoint, this held two. Verified by hand, restored before committing.
+	if tl := storedTlogs(t, mem); len(tl) != 1 || tl[0].size != 1 {
+		t.Fatalf("tlog-checkpoints %+v, want one over size 1", tl)
 	}
 }
 
