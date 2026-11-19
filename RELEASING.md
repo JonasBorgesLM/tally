@@ -3,8 +3,8 @@
 One maintainer cuts releases. These are the steps that are easy to get backwards under pressure. The branch
 model is in [`CONTRIBUTING.md`](CONTRIBUTING.md#git-flow).
 
-**v0.1.0 is the first release** cut through this file and the release workflow (`.github/workflows/release.yml`,
-#57), after `v0.1.0-rc.1` as the workflow's first run (#58).
+**v0.1.0 was the first release** cut through this file and the release workflow (`.github/workflows/release.yml`,
+#57), after `v0.1.0-rc.1` as the workflow's first run (#58); v0.2.0 followed the same steps.
 
 ## Before the first tag
 
@@ -115,7 +115,8 @@ Or rebuild it and compare. From a checkout of the tag, with the Go version the n
 ./.github/scripts/build-release.sh ./rebuilt vX.Y.Z && sha256sum ./rebuilt/*
 ```
 
-`gh attestation verify` is not yet tried on a real release; `v0.1.0-rc.1` is where it is (#58). What provenance
+`gh attestation verify` was tried on `v0.1.0-rc.1` and `v0.1.0` (#58): every file verified, and a copy with one byte
+changed was refused. What provenance
 does not cover: a compromised CI still attests what it built, since provenance names the pipeline, not its
 honesty (ADR-0014). The rebuild is the check that does not depend on it, and SPEC is enough to write a verifier
 of one's own.
