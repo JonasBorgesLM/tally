@@ -288,6 +288,12 @@ already in the range. A range whose `s` is below the first segment stands for le
 it, and is refused. A log a v0.1 writer pruned has no range and has lost the leaves one needs: it is pruned
 further without one, and has no tree below its first segment.
 
+**(writer)** A writer reopening a pruned log uses its range only when its last stored checkpoint carries a root,
+at a size at or above the range's start, and the tree the range gives reproduces that root; a root that differs
+is refused (`ErrStoredCheckpointMismatch`). Without such a root, nothing signed has checked the range, so the
+writer treats the tree as unknown and signs `tally-chain/v1` checkpoints: it never signs a root over a prefix the
+host alone vouches for.
+
 A range is written by the host and proves nothing by itself: a proof built from it is checked against a root a
 trusted checkpoint signs, and a false hash makes the proof fail. **A verifier does not read it.**
 
@@ -618,7 +624,9 @@ genesis not read, accepted checkpoints naming more than one `origin` (step 3).
 9. **Result.** `AttestedSize` is the largest `size` among matched checkpoints, or 0 if none matched. It never
    exceeds `Size`. `UnattestedEntries = Size - AttestedSize`, counted in leaves: with nothing attested,
    genesis is among them. With witnesses, `WitnessedSize` is the largest `size` among matched checkpoints
-   that at least the quorum of trusted witnesses cosigned, or 0.
+   whose `size` and root at least the quorum of trusted witnesses cosigned, or 0. Witnesses are counted across
+   every accepted note of that `origin`, `size` and root, each once: each witness's cosignature usually arrives
+   on a note of its own.
 10. **Full attestation, if required.** If the caller required the whole log to be attested and
     `UnattestedEntries > 0`, that is `UnattestedTail`. Without the requirement, an unattested tail is not a
     violation: it is reported in `UnattestedEntries`, and §7.1 says what it means.
