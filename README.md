@@ -3,9 +3,10 @@
 **A tamper-evident audit log library for Go:** a hash chain, signed checkpoints anchored off the
 host, offline verification, and crypto-shredding for LGPD.
 
-> **Status: v0.2.0.** The library, the file store, the anchor spool, the vault, the witness and the CLI are
-> verified in CI, with the attack suite below; v0.1.0 was audited before its release ([docs/AUDIT.md](docs/AUDIT.md)),
-> and v0.2's tree, checkpoints and witness were not audited apart from it.
+> **Status: v0.2.1.** The library, the file store, the anchor spool, the vault, the witness and the CLI are
+> verified in CI, with the attack suite below. v0.1.0 and v0.2.0 were each audited in a clean session, the second
+> by a different model from the one that wrote the code; v0.2.1 carries that audit's fixes
+> ([docs/AUDIT.md](docs/AUDIT.md)).
 > In v0.x a minor version may break the API; the CHANGELOG lists every break. Progress is on the
 > [project board](https://github.com/users/JonasBorgesLM/projects/9).
 
