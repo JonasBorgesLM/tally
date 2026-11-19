@@ -8,6 +8,34 @@ The release workflow will refuse to publish a tag with no section here.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-19
+
+M11: the Merkle tree over the leaves v0.1 already stored, checkpoints as `tlog-checkpoint` plus a heartbeat note,
+and a witness on another machine, which turns split view (T-09) from undetected into partial. Nothing stored is
+rewritten, and every API change is an addition.
+
+### Changed
+
+- ⚠️ **A v0.1 verifier cannot read a v0.2 log.** The v0.2 writer signs each checkpoint as two new notes (SPEC §5.2),
+  which `tally verify` v0.1.0 reports as `MalformedRecord` and exits 1, though the log is intact; checked by
+  running the v0.1.0 release on a v0.2 log. Upgrade every verifier and monitor before any writer (RUNBOOK,
+  "Upgrading from v0.1"). A v0.2 verifier reads v0.1 logs unchanged.
+- ⚠️ **The anchor holds two files per checkpoint, and `WithAnchorQueue` counts notes:** its default of 64 now
+  holds 32 checkpoints.
+- **`Log.Checkpoint` returns the heartbeat note**, and `tally checkpoint` prints it; `tally prune` refuses a
+  `tlog-checkpoint`.
+- **`Verify` builds the tree as it reads**: 13% slower on an Apple M1 (1.26M to 1.10M entries/s), above
+  RNF-03's 100k.
+
+### The API changes (generated)
+
+`gorelease -base=v0.1.0`, all compatible:
+
+- `github.com/JonasBorgesLM/tally`: `CompactRanger`, `CountCosignatures`, `Report.WitnessedSize`,
+  `UnwitnessedTail`, `WithRequireWitnessed`, `WithWitnesses` added.
+- `github.com/JonasBorgesLM/tally/filestore`: `(*Reader).CompactRange`, `(*Store).CompactRange` added.
+- `github.com/JonasBorgesLM/tally/witness`: package added.
+
 ### Added
 
 - **A witness on a second machine, run** (#61): RUNBOOK gains "A witness on a second machine", executed against a
