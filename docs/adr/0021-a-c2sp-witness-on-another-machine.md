@@ -97,3 +97,22 @@ and the signature, and other logs' witnesses speak them.
 - **ML-DSA-44:** when the module's floor reaches Go 1.27, which RNF-01 allows once Go 1.28 is released and
   Go 1.26 stops receiving security fixes.
 - **A second witness:** when the demo gains a third machine.
+
+## Amendment — what the v0.2.0 audit changed (A2-01, A2-02, A2-05, A2-06)
+
+The clean-session audit of v0.2.0 (`docs/AUDIT.md`) found three gaps in this decision as built, each now closed or
+stated:
+
+- **Decision 5's quorum is counted across notes (A2-01).** Each push publishes a note with one witness's
+  cosignature, so counting per note, as v0.2.0 did, could never meet a quorum above 1. `Verify` counts the distinct
+  trusted witnesses that cosigned the same origin, size and root, across every accepted note.
+- **Decision 5's wording was wrong.** It said that, when required, `AttestedSize` counts only witnessed
+  checkpoints. The code leaves `AttestedSize` as it is and reports the leaves past `WitnessedSize` as
+  `UnwitnessedTail`, as SPEC §7 step 11 says. The code is right; this line supersedes that sentence.
+- **Decision 6 is enforced (A2-05).** `tally prune --witness-key` refuses a prune above what the witness cosigned
+  in the anchor. The push refusal stays, for a prune made without the flag.
+- **A consequence not stated (A2-02).** With the log's key, an attacker can get the witness to cosign an invented
+  size, which a witness cannot tell from a real one, and no honest push can follow it. That is a denial of
+  witnessing, loud at the host's next push, and the recovery is a key rotation and a reset of the witness's
+  state. T-09's residual and the RUNBOOK say so. A cap on growth per request was the option not taken: it is a
+  rule outside c2sp, and it narrows the attack without closing it.

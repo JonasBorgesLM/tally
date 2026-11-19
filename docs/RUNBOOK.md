@@ -75,6 +75,11 @@ credential there: the host pushes to it, and it never connects back.
      history it witnessed;
    - *the witness refused the log's history*: a fork (T-09), or a rewrite under the log's key (T-07);
    - *a prune left it behind*: the log was pruned above the size the witness holds, and no proof reaches it.
+
+   *The witness has cosigned more than this log holds* also follows a compromise of the log's key: with it, an
+   attacker can get the witness to cosign an invented size, which no honest push can follow (audit A2-02). After
+   rotating the key (below), reset the witness's state for the log: stop `serve`, remove that log's file under
+   `~witness/state`, and start it again. It witnesses from that point only.
 3. **The auditor requires it:**
 
    ```bash
@@ -83,7 +88,10 @@ credential there: the host pushes to it, and it never connects back.
    ```
 
    `UnwitnessedTail` means leaves no witnessed checkpoint covers: entries since the last push, which the next
-   one covers, or a history the witness never saw.
+   one covers, or a history the witness never saw. With more than one witness, `--witness` once per key and
+   `--witness-quorum N`: each push publishes its own cosigned note, and `verify` counts the distinct witnesses
+   across them. An incremental `--from` on a log with no pruned range cannot see the witness: it has no tree to
+   compare a `tlog-checkpoint` with, so it reports `witnessed 0`; verify from leaf 0 to require it.
 4. **Prune only at a checkpoint the witness cosigned**: the heartbeat note whose size is at most the size in the
    newest cosigned `tlog-checkpoint` in the anchor. Pruning above the witness's size strands it (step 2's third
    refusal), and a witness can only be moved past that by resetting its state by hand, after which it witnesses

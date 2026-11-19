@@ -295,7 +295,9 @@ writer treats the tree as unknown and signs `tally-chain/v1` checkpoints: it nev
 host alone vouches for.
 
 A range is written by the host and proves nothing by itself: a proof built from it is checked against a root a
-trusted checkpoint signs, and a false hash makes the proof fail. **A verifier does not read it.**
+trusted checkpoint signs, and a false hash makes the proof fail. **A verifier reads it only to compare such roots**
+(§7 step 5), never as evidence of its own: it can make a comparison fail, never pass, provided a signed root exists
+to compare with, which is why the writer above signs no root over a range none has checked (audit A2-03).
 
 ## 4. Sealing
 
@@ -595,7 +597,9 @@ genesis not read, accepted checkpoints naming more than one `origin` (step 3).
    **The tree is known** when step 4 read from leaf 0, or, from `f > 0`, when the segment set holds a pruned
    range (§3.6) that starts at or above `f`: the verifier builds the tree from it once the leaves reach its
    start. The range is the host's, so it is used only to compare roots that a signed checkpoint states: a
-   false range makes a comparison fail, never pass. Without a known tree, a root is not compared.
+   false range makes a comparison fail, never pass, given a signed root to compare with (§3.6). Without a known
+   tree, a root is not compared, and a `tlog-checkpoint` is not matched: so an incremental start (step 2) on a
+   log with no range never matches one, and with witnesses its `WitnessedSize` is 0.
 
    A `head` or a root that differs is `ForkDetected` for an anchor checkpoint and `CheckpointMismatch`
    otherwise. A checkpoint whose comparisons succeed is **matched**, if it was compared at all: a
