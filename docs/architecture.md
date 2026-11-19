@@ -7,7 +7,7 @@ and `Anchor` could only write, though `Verify` has to read it.
 ## Packages and dependency direction
 
 ```
-cmd/tally ──▶ tally, filestore, anchor
+cmd/tally ──▶ tally, filestore, anchor, internal/merkle
 filestore, anchor, seal, tallytest ──▶ tally ──▶ internal/wire, internal/note, internal/merkle
 filestore ──▶ internal/fsx, internal/merkle
 seal ──▶ internal/fsx, internal/wire
@@ -221,8 +221,8 @@ func OpenReader(dir string) (*Reader, error) // read-only Source: no lock, no re
 // cmd/tally: read-only commands, exit 0 intact, 1 violation, 2 usage or IO error (RF-13).
 // Every log-derived value printed is escaped first (RS-13).
 //   tally verify     --dir DIR --key VKEY [--anchor DIR] [--require-fully-attested] [--from FILE] [--heartbeat D --tolerance D]
-//   tally head       --dir DIR             // size and last leaf hash, unverified
-//   tally checkpoint --dir DIR --key VKEY  // the newest stored checkpoint that verifies
+//   tally head       --dir DIR             // size, last leaf hash and Merkle root, unverified
+//   tally checkpoint --dir DIR --key VKEY  // the newest heartbeat note that verifies; --tlog, the newest tlog-checkpoint
 //   tally keygen     --name ORIGIN --out PREFIX // PREFIX.key at 0600, PREFIX.pub; never overwrites
 //   tally prune      --dir DIR --key VKEY --anchor DIR --checkpoint FILE // only at a checkpoint the anchor holds (RS-20)
 //   tally export     --dir DIR [--format jsonl] [--out FILE]  // decoded records, text escaped, bytes base64

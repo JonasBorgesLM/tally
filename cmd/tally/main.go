@@ -3,7 +3,7 @@
 //
 //	tally verify     --dir DIR --key VKEY [--anchor DIR] [--require-fully-attested] ...
 //	tally head       --dir DIR
-//	tally checkpoint --dir DIR --key VKEY
+//	tally checkpoint --dir DIR --key VKEY [--tlog]
 //	tally keygen     --name ORIGIN --out PREFIX
 //	tally prune      --dir DIR --key VKEY --anchor DIR --checkpoint FILE
 //	tally export     --dir DIR [--format jsonl|bundle] [--out FILE] ...
@@ -55,7 +55,7 @@ const usage = `usage:
                    [--require-fully-attested] [--from FILE]
                    [--heartbeat DURATION --tolerance DURATION]
   tally head       --dir DIR
-  tally checkpoint --dir DIR --key VKEY [--key-file FILE]
+  tally checkpoint --dir DIR --key VKEY [--key-file FILE] [--tlog]
   tally keygen     --name ORIGIN --out PREFIX
   tally prune      --dir DIR --key VKEY --anchor DIR --checkpoint FILE
   tally export     --dir DIR [--format jsonl] [--out FILE]

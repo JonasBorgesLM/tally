@@ -15,6 +15,7 @@ import (
 	"github.com/JonasBorgesLM/tally"
 	"github.com/JonasBorgesLM/tally/anchor"
 	"github.com/JonasBorgesLM/tally/filestore"
+	"github.com/JonasBorgesLM/tally/internal/merkle"
 )
 
 // output writes to w and keeps the first error, so a command can tell whether
@@ -239,6 +240,10 @@ func cmdHead(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	var (
 		last tally.Record
 		read bool
+		// tree is the Merkle tree's compact range over the leaves read (#60):
+		// from leaf 0, or from the pruned range once the leaves reach it. nil
+		// while unknown.
+		tree, pending *merkle.Range
 	)
 	for r, err := range src.Records(ctx, 0) {
 		var me *tally.MalformedError
@@ -249,25 +254,52 @@ func cmdHead(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		if err != nil {
 			return fail(stderr, err)
 		}
+		if !read {
+			if r.Seq == 0 {
+				tree = new(merkle.Range)
+			} else if start, hashes, ok, rerr := src.CompactRange(ctx); rerr == nil && ok && start >= r.Seq {
+				if rng, nerr := merkle.NewRange(start, hashes); nerr == nil {
+					pending = rng
+				}
+			}
+		}
+		if tree == nil && pending != nil && pending.Size() == r.Seq {
+			tree, pending = pending, nil
+		}
+		if tree != nil {
+			tree.Append(tally.LeafHash(r.Body))
+		}
 		last, read = r, true
 	}
 	if !read {
 		return fail(stderr, errors.New("the directory holds no record"))
 	}
 	leaf := tally.LeafHash(last.Body)
+	root := "unknown: the log was pruned without a range"
+	if tree != nil {
+		if r, rerr := tree.Root(); rerr == nil {
+			root = base64.StdEncoding.EncodeToString(r[:])
+		}
+	}
 	o := &output{w: stdout}
-	o.printf("size %d\nhead %s\nunverified: run tally verify for what is attested\n",
-		last.Seq+1, base64.StdEncoding.EncodeToString(leaf[:]))
+	o.printf("size %d\nhead %s\nroot %s\nunverified: run tally verify for what is attested\n",
+		last.Seq+1, base64.StdEncoding.EncodeToString(leaf[:]), root)
 	return o.status(exitIntact)
 }
 
 // cmdCheckpoint prints the newest stored checkpoint whose signature verifies
 // under the given keys, as a signed note, for an auditor or an anchor. Status
 // 1 means checkpoints are stored and none verifies; 2, that none is stored.
+//
+// A v0.2 log stores each checkpoint as a pair (#60). By default it prints the
+// newest heartbeat note, which names a head and is what prune and an
+// incremental verify start from; with --tlog, the newest tlog-checkpoint,
+// which is what a witness cosigns.
 func cmdCheckpoint(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := newFlags("checkpoint", stderr)
 	dir := fs.String("dir", "", "the log directory")
 	keys := keyFlags(fs)
+	tlogOnly := fs.Bool("tlog", false, "print the newest tlog-checkpoint, for a witness, instead of the newest heartbeat note")
 	if err := fs.Parse(args); err != nil {
 		return exitError
 	}
@@ -295,6 +327,9 @@ func cmdCheckpoint(ctx context.Context, args []string, stdout, stderr io.Writer)
 			return fail(stderr, err)
 		}
 		stored++
+		if isTlog(cp) != *tlogOnly {
+			continue
+		}
 		if tally.VerifyCheckpoint(cp, verifiers) == nil {
 			newest = cp
 		}
@@ -302,6 +337,10 @@ func cmdCheckpoint(ctx context.Context, args []string, stdout, stderr io.Writer)
 	switch {
 	case stored == 0:
 		return fail(stderr, errors.New("no checkpoint is stored"))
+	case newest == nil && *tlogOnly:
+		(&output{w: stderr}).printf("tally checkpoint: no tlog-checkpoint verifies under the given keys " +
+			"(a log written by v0.1, or pruned by it, has none)\n")
+		return exitViolation
 	case newest == nil:
 		(&output{w: stderr}).printf("tally checkpoint: %d checkpoints stored, none verifies under the given keys\n", stored)
 		return exitViolation
@@ -311,4 +350,12 @@ func cmdCheckpoint(ctx context.Context, args []string, stdout, stderr io.Writer)
 	o := &output{w: stdout}
 	o.printf("%s", sanitizeLines(string(newest)))
 	return o.status(exitIntact)
+}
+
+// isTlog reports whether cp's body is a tlog-checkpoint (SPEC §5.2): three
+// lines, the second a size, where a tally body has its name.
+func isTlog(cp tally.SignedCheckpoint) bool {
+	text, _, ok := strings.Cut(string(cp), "\n\n")
+	lines := strings.Split(text, "\n")
+	return ok && len(lines) == 3 && !strings.HasPrefix(lines[1], "tally-")
 }

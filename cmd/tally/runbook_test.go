@@ -665,3 +665,116 @@ func age(t *testing.T, dir string, d time.Duration) {
 		}
 	}
 }
+
+// "Upgrading from v0.1" (#60): a log a v0.1 writer wrote, as its bytes
+// (testdata/vectors/segments.json), with its tally-chain/v1 checkpoint in the
+// anchor. The v0.2 writer reopens it, appends and closes; it stores and
+// publishes the new pairs beside the old checkpoint, nothing stored is
+// rewritten, and the log verifies against the anchor, all of it attested.
+func TestDrillUpgradeFromV01(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	dir, anchorDir := filepath.Join(root, "log"), filepath.Join(root, "anchor")
+	for _, d := range []string{dir, anchorDir} {
+		if err := os.Mkdir(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// The v0.1 log, byte for byte, and its checkpoint in the anchor.
+	raw, err := os.ReadFile("../../testdata/vectors/segments.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vec struct {
+		Files []struct{ Name, Hex string } `json:"files"`
+	}
+	if err = json.Unmarshal(raw, &vec); err != nil {
+		t.Fatal(err)
+	}
+	before := map[string][]byte{}
+	for _, f := range vec.Files {
+		b, herr := hex.DecodeString(f.Hex)
+		if herr != nil {
+			t.Fatal(herr)
+		}
+		before[f.Name] = b
+		if err = os.WriteFile(filepath.Join(dir, f.Name), b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a, err := anchor.NewDir(anchorDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := filestore.OpenReader(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for cp, cerr := range r.Checkpoints(ctx) {
+		if cerr != nil {
+			t.Fatal(cerr)
+		}
+		if !bytes.Contains(cp, []byte("\ntally-chain/v1\n")) {
+			t.Fatalf("the vector's checkpoint is not v0.1's:\n%s", cp)
+		}
+		if err = a.Publish(ctx, cp); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// The v0.2 writer reopens it, appends and closes, publishing to the anchor.
+	s, err := filestore.Open(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l, err := tally.Open(ctx, s, signer(t), tally.WithAnchors(a), tally.WithCheckpointEvery(0, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range 3 {
+		ev := tally.Event{ID: tally.EventID(fmt.Sprintf("upgrade-%d", i)), OccurredAt: time.Unix(1_800_000_000, 0),
+			Actor: tally.System(), Action: "user.login", Outcome: tally.OutcomeSuccess}
+		if _, err = l.Append(ctx, ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = l.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Nothing v0.1 stored was rewritten: segment 0 is the same bytes.
+	seg0, err := os.ReadFile(filepath.Join(dir, "0000000000000000.tlog")) // #nosec G304 -- a drill's own file
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(seg0, before["0000000000000000.tlog"]) {
+		t.Fatal("the v0.2 writer rewrote segment 0")
+	}
+	kinds := map[string]int{}
+	for cp, cerr := range a.Checkpoints(ctx) {
+		if cerr != nil {
+			t.Fatal(cerr)
+		}
+		switch {
+		case bytes.Contains(cp, []byte("\ntally-chain/v1\n")):
+			kinds["v0.1"]++
+		case bytes.Contains(cp, []byte("\ntally-heartbeat/v1\n")):
+			kinds["heartbeat"]++
+		case isTlog(cp):
+			kinds["tlog"]++
+		}
+	}
+	if kinds["v0.1"] != 1 || kinds["heartbeat"] != 1 || kinds["tlog"] != 1 {
+		t.Fatalf("the anchor holds %v, want the v0.1 checkpoint and one new pair", kinds)
+	}
+
+	out, stderr, code := cli(t, "verify", "--dir", dir, "--key", tallytest.TestVerifierKey, "--anchor", anchorDir,
+		"--require-fully-attested")
+	if code != exitIntact || line(t, out, "attested") != "8" {
+		t.Fatalf("verify: status %d\n%s%s", code, out, stderr)
+	}
+	if _, _, code = cli(t, "checkpoint", "--dir", dir, "--key", tallytest.TestVerifierKey, "--tlog"); code != exitIntact {
+		t.Fatalf("checkpoint --tlog after the upgrade: status %d", code)
+	}
+}
