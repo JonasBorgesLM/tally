@@ -1,10 +1,69 @@
-# Clean-session audit before v0.1.0
+# Clean-session audits
+
+Two audits so far: [v0.2.0's](#v020-the-tree-the-checkpoints-and-the-witness), of what M11 added, and v0.1.0's,
+below it.
+
+## v0.2.0: the tree, the checkpoints and the witness
+
+### How it was run
+
+- **Audited:** the `v0.2.0` tag, 2026-11-19, as a copy with no git history and no `CHANGELOG.md`.
+- **Auditor:** an agent of a **different model** (Claude Sonnet 5.5) from the one that wrote the code (Claude Opus
+  5.5), with none of the design conversation in its context. That answers this file's own recommendation after
+  v0.1.0 halfway: independent of context and of model, not of vendor or of a person.
+- **Scope:** `internal/merkle`; the pruned range; the checkpoint pair and the writer; `Verify`'s bodies, roots,
+  forks, heartbeat and witness options; `internal/note`'s cosignatures; the `witness` package and
+  `tally witness serve | push`. Every finding needed a file, a line, a path and a reproduction.
+- **Each reproduction was run again before its fix**, and each fix has a test seen failing without it.
+
+### Findings
+
+| | Severity | Finding | Outcome |
+| --- | --- | --- | --- |
+| A2-01 | MEDIUM | A quorum above 1 could not be met by the documented flow: each push publishes one witness's cosignature per note, and `Verify` counted per note, so two witnesses at quorum 2 left an honest log `UnwitnessedTail`. Fail-closed, but THREAT-MODEL and ADR-0021 presented the quorum as a mitigation | **Fixed**, #154: counted across notes of one size and root |
+| A2-02 | LOW | With the log's key, the witness can be made to cosign an invented size (2^40, with a proof of invented hashes), after which no honest push is accepted. Inherent to add-checkpoint: a witness cannot know the leaves | **Accepted and documented**: T-09's residual, the RUNBOOK's recovery, ADR-0021's amendment |
+| A2-03 | LOW | On a log v0.1 pruned, a `pruned.range` the host planted was adopted on reopen, and the log's own key signed a root over a prefix nothing had checked; `Verify` then reported the log intact | **Fixed**, #155: a range is used only once a signed root at or above its start has checked it |
+| A2-04 | LOW | Two refusals had no test that removing them would fail: the writer refusing a tampered range on reopen, and a prune refusing a range below the first segment | **Fixed**, #155: both tested, each seen failing |
+| A2-05 | LOW | Nothing enforced "prune only at a checkpoint the witness cosigned"; a prune above it stranded the witness until a manual reset | **Fixed**, #156: `tally prune --witness-key` refuses it |
+| A2-06 | LOW | Documentation against the code: SPEC said a verifier never reads the range (it does, to compare signed roots); ADR-0021 said `AttestedSize` counts only witnessed checkpoints (it does not); "a false range never makes a comparison pass" held only given a signed root; nothing said an incremental verify cannot see the witness | **Fixed**, docs: SPEC §3.6 and §7 step 5, the RUNBOOK, ADR-0021's amendment |
+| A2-07 | info | A crash between the pair's two notes leaves a `tlog-checkpoint` last, whose missing time drops the "never earlier than the last checkpoint" floor for the next one; and `Prune` and `witness push` hold 32 bytes per leaf | **Open**, unreproduced: the first needs a faulting store and a regressing clock; the second is memory in operator commands, not a bound on untrusted input |
+
+### What held
+
+Checked by the auditor, with what it did:
+
+- **The proofs.** `VerifyInclusion` and `VerifyConsistency` against RFC 9162's text step by step, and 33,620
+  consistency cases by brute force: every fork point and every pair of sizes up to 40. A proof verified exactly
+  when the two trees share the prefix.
+- **The witness.** The old-size, size, consistency, same-size root and durable-write checks each failed a test
+  when removed. Requests and state files are bounded before reading. A rollback is answered 400 or 409 with no
+  state change.
+- **The cosignatures.** One alone never accepts a note. A bad one from a trusted witness is `BadSignature`.
+  The origin is in the signed text, so a cosignature cannot move between logs.
+- **The three bodies.** None parses as another, extension lines are refused, and only timed notes feed the
+  heartbeat and time order.
+- **The pruned range against a host without the key.** No panic or allocation from a malformed one. A garbled
+  one drops the tree, never invents a root.
+- **The CLI.** Verdict last, values sanitized. `--require-witnessed` without a witness is an error. The push
+  checks the cosignature before publishing.
+
+### What was not covered
+
+- **Fuzzing:** none beyond the existing targets and the brute-force proof test.
+- **Packages:** `anchor/`, `seal/`, `tallytest`, `internal/fsx` and `internal/wire` were not reviewed, except where
+  v0.2 uses them.
+- **The witness as a real process:** two processes on one state directory (there is no file lock), TLS, slow
+  clients, and real crashes and fsync failures in `Prune` and the witness.
+- **Very large logs:** memory and time were not measured.
+- **The Raspberry Pi procedures** were not repeated.
+
+## v0.1.0
 
 RS-16 asks for a final audit **in a clean session, by someone who did not write the code** (#56). This is its
 record: what was audited and how, what it found and what became of each finding, what held, and what was not
 covered.
 
-## How it was run
+### How it was run
 
 - **Audited:** `develop` at `f2e5707`, 2026-11-18.
 - **Auditor:** a fresh agent with none of the design conversation in its context. Its inputs were
@@ -21,7 +80,7 @@ covered.
   different model, remains worth doing.
 - **The findings were reproduced again before they were fixed**, by running the auditor's tests.
 
-## Findings
+### Findings
 
 | | Severity | Finding | Outcome |
 | --- | --- | --- | --- |
@@ -34,7 +93,7 @@ covered.
 | A-07 | LOW | A sealed payload's length is in clear (the plaintext's plus 29 bytes) and survives a shred, and nothing said so | **Accepted and documented**, #131 (#128): README, T-20, `Seal`. Padding to buckets is a later option |
 | A-08 | LOW | `tally verify` read `--from` and `--key-file` without a bound | **Fixed**, #131 (#128) |
 
-### Found while fixing them
+#### Found while fixing them
 
 - **Zeros past the last frame read as frames**, found while checking A-02's fix against preallocated tails. A
   length of 0 has the CRC of nothing, which is also 0, so 4096 zeros read as 512 empty frames. Nothing was
@@ -47,7 +106,7 @@ covered.
   a row since. **Fixed** in #136: the bare pattern is gone, and the seed as `%v` and `%d` print it is still
   checked.
 
-## What held
+### What held
 
 Checked by the auditor, with what it did:
 
@@ -75,7 +134,7 @@ Checked by the auditor, with what it did:
   - shred removes the ref, then the index, each fsynced;
   - KEK rotation rewraps without changing the data keys.
 
-## What was not covered
+### What was not covered
 
 - **Supply chain (T-18):** the release, the SBOM and reproducible builds. These are M10's.
 - **Linux-only behaviour,** preallocation and free space included. The audit ran on macOS. CI runs Linux, but

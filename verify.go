@@ -149,9 +149,10 @@ func WithRequireFullyAttested() VerifyOption {
 
 // WithWitnesses trusts the given witnesses' cosignatures (ADR-0021, #61):
 // c2sp.org/tlog-cosignature's cosignature/v1, from keys of type 0x04. A
-// checkpoint that the log's key signed and that at least quorum of them
-// cosigned is witnessed, and Report.WitnessedSize is the largest one matched
-// against the log. A bad cosignature from one of them is BadSignature, as a
+// checkpoint is witnessed when at least quorum of them cosigned its size and
+// root, counted across every accepted note of that size and root, each
+// witness once; Report.WitnessedSize is the largest one matched against the
+// log. A bad cosignature from one of them is BadSignature, as a
 // bad log signature is. Verify returns an error, not a report, if a key is
 // not a witness's or quorum is not between 1 and the number of witnesses.
 //
@@ -184,10 +185,11 @@ type checkpoint struct {
 	// root is set when hasRoot: a tlog-checkpoint or a heartbeat note.
 	root    [32]byte
 	hasRoot bool
-	// cosigned is how many trusted witnesses cosigned it (ADR-0021).
-	cosigned int
-	start    bool // the caller's start checkpoint
-	anchored bool // read from an anchor
+	// cosigners are the trusted witnesses that cosigned this note, each
+	// once (ADR-0021).
+	cosigners []*note.Verifier
+	start     bool // the caller's start checkpoint
+	anchored  bool // read from an anchor
 }
 
 // mismatchKind is SPEC §7.2's kind for a checkpoint whose head disagrees with
@@ -221,7 +223,7 @@ func readCheckpoint(cp SignedCheckpoint, keys Verifiers, witnesses []*note.Verif
 	}
 	for _, cs := range n.Cosignatures {
 		if slices.Contains(witnesses, cs.Witness) {
-			c.cosigned++
+			c.cosigners = append(c.cosigners, cs.Witness) // note.Open lists each once
 		}
 	}
 	for _, v := range n.SignedBy {
@@ -265,7 +267,7 @@ func CountCosignatures(cp SignedCheckpoint, keys, witnesses Verifiers) (int, err
 	if f != nil {
 		return 0, fmt.Errorf("tally: checkpoint not accepted: %v: %s", f.Kind, f.Note)
 	}
-	return c.cosigned, nil
+	return len(c.cosigners), nil
 }
 
 // parseCheckpointBody is SPEC §5.2, strictly: a tally-chain/v1 checkpoint
@@ -661,7 +663,8 @@ func Verify(ctx context.Context, src Source, keys Verifiers, opts ...VerifyOptio
 	rep.UnattestedEntries = rep.Size - rep.AttestedSize
 	if len(cfg.witnesses) > 0 {
 		for i, c := range cps {
-			if matched[i] && c.cosigned >= cfg.quorum && c.size > rep.WitnessedSize {
+			if matched[i] && c.hasRoot && c.size > rep.WitnessedSize &&
+				len(cosignersOf(cps, origin, c.size, c.root)) >= cfg.quorum {
 				rep.WitnessedSize = c.size
 			}
 		}
@@ -830,4 +833,24 @@ func checkWitnesses(cfg *verifyConfig) error {
 		}
 	}
 	return nil
+}
+
+// cosignersOf is every trusted witness that cosigned some accepted note of
+// origin, size and root, each counted once (ADR-0021, audit A2-01): each
+// witness's push publishes a note of its own, so a quorum is met across
+// notes, never only within one. A note of another root is another tree, and
+// counts for none.
+func cosignersOf(cps []checkpoint, origin string, size uint64, root [32]byte) []*note.Verifier {
+	var out []*note.Verifier
+	for _, c := range cps {
+		if c.origin != origin || c.size != size || !c.hasRoot || c.root != root {
+			continue
+		}
+		for _, w := range c.cosigners {
+			if !slices.Contains(out, w) {
+				out = append(out, w)
+			}
+		}
+	}
+	return out
 }

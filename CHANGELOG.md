@@ -8,6 +8,30 @@ The release workflow will refuse to publish a tag with no section here.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-19
+
+The fixes from v0.2.0's clean-session audit (`docs/AUDIT.md`), by an agent of a different model from the one that
+wrote the code: no CRITICAL or HIGH finding. `gorelease -base=v0.2.0` reports no API change; `tally prune` gains a
+flag.
+
+### Fixed
+
+- **`tally prune --witness-key` refuses a prune above what the witness cosigned** (audit A2-05). Pruning above the
+  witness's size left it no consistency proof to follow, so every later push failed until the witness was reset by
+  hand; the rule was a RUNBOOK line only. With the witness's key, `prune` reads the largest cosigned
+  `tlog-checkpoint` in the anchor and refuses, status 1, a checkpoint above it.
+- **The writer never signs a root over a planted range** (audit A2-03). On a log v0.1 pruned, which has no range and
+  no root, a `pruned.range` the host wrote was adopted on reopen, and the log's own key then signed a root over a
+  prefix nothing had checked. A stored range is now used only when the last stored checkpoint's root, at or above
+  the range's start, has checked it; otherwise the tree is unknown and the writer keeps signing `tally-chain/v1`
+  (SPEC §3.6). Tests now cover the writer refusing a tampered range and a prune refusing a range below the first
+  segment, which nothing tested before (A2-04).
+- **A witness quorum above 1 is met across notes** (audit A2-01). Each `tally witness push` publishes a note with
+  one witness's cosignature, and v0.2.0 counted cosignatures per note, so a quorum of 2 left an honest log
+  `UnwitnessedTail`. `Verify` now counts the distinct trusted witnesses that cosigned the same size and root,
+  across every accepted note. A witness counted twice is still one, and a cosignature of another root counts for
+  nothing.
+
 ## [0.2.0] - 2026-11-19
 
 M11: the Merkle tree over the leaves v0.1 already stored, checkpoints as `tlog-checkpoint` plus a heartbeat note,

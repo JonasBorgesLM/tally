@@ -60,7 +60,7 @@ const usage = `usage:
   tally head       --dir DIR
   tally checkpoint --dir DIR --key VKEY [--key-file FILE] [--tlog]
   tally keygen     --name ORIGIN --out PREFIX [--witness]
-  tally prune      --dir DIR --key VKEY --anchor DIR --checkpoint FILE
+  tally prune      --dir DIR --key VKEY --anchor DIR --checkpoint FILE [--witness-key WKEY]
   tally export     --dir DIR [--format jsonl] [--out FILE]
   tally export     --dir DIR --format bundle --out FILE.tar --key VKEY [--anchor DIR]
   tally bundle-check FILE.tar

@@ -46,8 +46,8 @@ Decisions carrying an explicit trigger, so "revisit later" is not a synonym for 
 
 | ADR | Reopen when |
 | --- | --- |
-| [`0002`](0002-linear-chain-now-merkle-at-v0-2.md) | When a consumer needs an inclusion proof without reading the log, or M11 begins. |
-| [`0006`](0006-anchor-and-heartbeat-in-the-mvp.md) | The time source at v0.2, when tlog-checkpoint removes the time line: decide in #60, between witness cosignature timestamps and a separate signed heartbeat note. |
+| [`0002`](0002-linear-chain-now-merkle-at-v0-2.md) | When a consumer needs an inclusion proof without reading the log, or M11 begins. **Triggered and answered:** M11 added the tree in v0.2.0 (#59), and [`0012`](0012-retention-through-anchored-prune.md)'s amendment settled what a prune keeps. |
+| [`0006`](0006-anchor-and-heartbeat-in-the-mvp.md) | The time source at v0.2, when tlog-checkpoint removes the time line: decide in #60, between witness cosignature timestamps and a separate signed heartbeat note. **Triggered and answered** by the amendment of #60: a separate signed heartbeat note. |
 | [`0009`](0009-poison-on-io-error-no-interval-durability.md) | If a filesystem or kernel offers a reliable way to learn what reached disk after a failed fsync. |
 | [`0015`](0015-signer-in-process-behind-an-interface.md) | When a real deployment holds an application whose compromise is credibly below root, such that a signer process changes the outcome, or when an audit finding asks for it. |
 | [`0021`](0021-a-c2sp-witness-on-another-machine.md) | ML-DSA-44 when the module's floor reaches Go 1.27, which RNF-01 allows once Go 1.28 is out; a second witness when the demo gains a third machine. |
@@ -60,5 +60,5 @@ Deferred deliberately, listed rather than left implicit.
 | --- | --- |
 | The vault's on-disk format and KEK rotation | Decided in [`0020`](0020-vault-file-per-subject-and-kek-rewrap.md); the encoding goes in `docs/SPEC.md` §4.1 with #43 |
 | Whether usher's new port replaces or sits beside `audit.Emitter`; a process death before a retry on a reducing event | #51: usher's own ADR, superseding `usher/ADR-0017` |
-| How heartbeats keep a time source under tlog-checkpoint | #60 (M11) |
+| How heartbeats keep a time source under tlog-checkpoint | Decided in [`0006`](0006-anchor-and-heartbeat-in-the-mvp.md)'s amendment (#60): a `tally-heartbeat/v1` note beside each `tlog-checkpoint` |
 | Whether SPEC v1 is sufficient for an independent verifier | #10: a clean-session review found 27 gaps over three rounds, closed in `docs/SPEC.md` and [`0016`](0016-verifier-stops-at-first-broken-record.md) |

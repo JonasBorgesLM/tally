@@ -288,8 +288,16 @@ already in the range. A range whose `s` is below the first segment stands for le
 it, and is refused. A log a v0.1 writer pruned has no range and has lost the leaves one needs: it is pruned
 further without one, and has no tree below its first segment.
 
+**(writer)** A writer reopening a pruned log uses its range only when its last stored checkpoint carries a root,
+at a size at or above the range's start, and the tree the range gives reproduces that root; a root that differs
+is refused (`ErrStoredCheckpointMismatch`). Without such a root, nothing signed has checked the range, so the
+writer treats the tree as unknown and signs `tally-chain/v1` checkpoints: it never signs a root over a prefix the
+host alone vouches for.
+
 A range is written by the host and proves nothing by itself: a proof built from it is checked against a root a
-trusted checkpoint signs, and a false hash makes the proof fail. **A verifier does not read it.**
+trusted checkpoint signs, and a false hash makes the proof fail. **A verifier reads it only to compare such roots**
+(§7 step 5), never as evidence of its own: it can make a comparison fail, never pass, provided a signed root exists
+to compare with, which is why the writer above signs no root over a range none has checked (audit A2-03).
 
 ## 4. Sealing
 
@@ -589,7 +597,9 @@ genesis not read, accepted checkpoints naming more than one `origin` (step 3).
    **The tree is known** when step 4 read from leaf 0, or, from `f > 0`, when the segment set holds a pruned
    range (§3.6) that starts at or above `f`: the verifier builds the tree from it once the leaves reach its
    start. The range is the host's, so it is used only to compare roots that a signed checkpoint states: a
-   false range makes a comparison fail, never pass. Without a known tree, a root is not compared.
+   false range makes a comparison fail, never pass, given a signed root to compare with (§3.6). Without a known
+   tree, a root is not compared, and a `tlog-checkpoint` is not matched: so an incremental start (step 2) on a
+   log with no range never matches one, and with witnesses its `WitnessedSize` is 0.
 
    A `head` or a root that differs is `ForkDetected` for an anchor checkpoint and `CheckpointMismatch`
    otherwise. A checkpoint whose comparisons succeed is **matched**, if it was compared at all: a
@@ -618,7 +628,9 @@ genesis not read, accepted checkpoints naming more than one `origin` (step 3).
 9. **Result.** `AttestedSize` is the largest `size` among matched checkpoints, or 0 if none matched. It never
    exceeds `Size`. `UnattestedEntries = Size - AttestedSize`, counted in leaves: with nothing attested,
    genesis is among them. With witnesses, `WitnessedSize` is the largest `size` among matched checkpoints
-   that at least the quorum of trusted witnesses cosigned, or 0.
+   whose `size` and root at least the quorum of trusted witnesses cosigned, or 0. Witnesses are counted across
+   every accepted note of that `origin`, `size` and root, each once: each witness's cosignature usually arrives
+   on a note of its own.
 10. **Full attestation, if required.** If the caller required the whole log to be attested and
     `UnattestedEntries > 0`, that is `UnattestedTail`. Without the requirement, an unattested tail is not a
     violation: it is reported in `UnattestedEntries`, and §7.1 says what it means.
