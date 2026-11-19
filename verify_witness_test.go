@@ -165,3 +165,57 @@ func TestWitnessMisuse(t *testing.T) {
 		}
 	}
 }
+
+// namedWitness is testWitness with a name of its own.
+func namedWitness(t *testing.T, seed byte, name string) (c *note.Cosigner, vkey string) {
+	t.Helper()
+	skey, vkey, err := note.GenerateCosignerKey(bytes.NewReader(bytes.Repeat([]byte{seed}, 32)), name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c, err = note.NewCosigner(skey); err != nil {
+		t.Fatal(err)
+	}
+	return c, vkey
+}
+
+// A quorum is met across notes (audit A2-01): each witness's push publishes a
+// note of its own, and Verify counts the distinct witnesses that cosigned the
+// same size and root. One witness twice is one; a note of another root at
+// that size counts for nothing.
+//
+// Negative control: with Verify counting cosignatures per note, as v0.2.0
+// did, the two separate notes stayed unwitnessed under a quorum of 2. Verified
+// by hand, restored before committing.
+func TestAQuorumIsMetAcrossNotes(t *testing.T) {
+	w1, k1 := namedWitness(t, 1, "w1.example")
+	w2, k2 := namedWitness(t, 2, "w2.example")
+	both, err := tally.NewVerifiers(k1, k2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	required := []tally.VerifyOption{tally.WithWitnesses(both, 2), tally.WithRequireWitnessed()}
+
+	src := honestLog(t, 9, 3, 6)
+	ten := tlogOfSize(t, src, 10)
+	src.cps = append(src.cps, cosign(t, w1, ten), cosign(t, w2, ten))
+	if rep := verify(t, src, required...); !rep.OK() || rep.WitnessedSize != 10 {
+		t.Fatalf("two witnesses, two notes: witnessed %d, %v", rep.WitnessedSize, kinds(rep))
+	}
+
+	once := honestLog(t, 9, 3, 6)
+	ten = tlogOfSize(t, once, 10)
+	once.cps = append(once.cps, cosign(t, w1, ten), cosign(t, w1, ten))
+	if rep := verify(t, once, required...); rep.WitnessedSize != 0 || !hasKind(rep, tally.UnwitnessedTail) {
+		t.Fatalf("one witness twice: witnessed %d, %v; want 0", rep.WitnessedSize, kinds(rep))
+	}
+
+	// w2 cosigned another tree of size 10: a fork, and no vote for this one.
+	other := honestLog(t, 9, 3, 6)
+	ten = tlogOfSize(t, once, 10)
+	other.cps = append(other.cps, cosign(t, w1, tlogOfSize(t, other, 10)), cosign(t, w2, ten))
+	rep := verify(t, other, required...)
+	if rep.WitnessedSize != 0 || !hasKind(rep, tally.UnwitnessedTail) {
+		t.Fatalf("w2 on another root: witnessed %d, %v; want 0", rep.WitnessedSize, kinds(rep))
+	}
+}

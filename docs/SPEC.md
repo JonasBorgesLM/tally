@@ -624,7 +624,9 @@ genesis not read, accepted checkpoints naming more than one `origin` (step 3).
 9. **Result.** `AttestedSize` is the largest `size` among matched checkpoints, or 0 if none matched. It never
    exceeds `Size`. `UnattestedEntries = Size - AttestedSize`, counted in leaves: with nothing attested,
    genesis is among them. With witnesses, `WitnessedSize` is the largest `size` among matched checkpoints
-   that at least the quorum of trusted witnesses cosigned, or 0.
+   whose `size` and root at least the quorum of trusted witnesses cosigned, or 0. Witnesses are counted across
+   every accepted note of that `origin`, `size` and root, each once: each witness's cosignature usually arrives
+   on a note of its own.
 10. **Full attestation, if required.** If the caller required the whole log to be attested and
     `UnattestedEntries > 0`, that is `UnattestedTail`. Without the requirement, an unattested tail is not a
     violation: it is reported in `UnattestedEntries`, and §7.1 says what it means.
