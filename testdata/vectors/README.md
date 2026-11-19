@@ -57,13 +57,18 @@ opens the note, and produces the same note bytes when signing the same text.
 
 ## `checkpoints.json`
 
-One checkpoint (SPEC §5.2) over the head of `records.json`: `size` 5, `head_hex` the last record's
-`leaf_hash_hex`, `recorded_at` the head entry's, and `state` `closed`. It is signed with the test key of
-`keys.json`, and `note` is the whole signed note.
+One checkpoint of each body (SPEC §5.2) over `records.json`, all of `size` 5 and signed with the test key
+of `keys.json`; `note` is the whole signed note and `kind` names the body:
 
-To check an implementation: open `note` under the verifier key (SPEC §5.4), parse `text` (§5.2), and
-verify `records.json` with this checkpoint (§7). The result is a valid log of size 5, all of it
-attested. `golang.org/x/mod/sumdb/note` also opens this note under the published key.
+| `kind` | What it carries |
+| --- | --- |
+| `tally-chain/v1` | v0.1's body: `head_hex`, the last record's `leaf_hash_hex`; `recorded_at` the head entry's; `state` `closed` |
+| `tally-heartbeat/v1` | The same, and `root_hex`, `merkle.json`'s root of 5 |
+| `tlog-checkpoint` | Origin, size and `root_hex` only: no time, no state, no extension line |
+
+To check an implementation: open each `note` under the verifier key (SPEC §5.4), parse `text` (§5.2), and
+verify `records.json` with it (§7), alone and with the others. Each result is a valid log of size 5, all of
+it attested. `golang.org/x/mod/sumdb/note` also opens all three under the published key.
 
 Points that are easy to get wrong:
 
@@ -71,6 +76,8 @@ Points that are easy to get wrong:
   end in a non-zero, but a formatter that trims trailing zeros, such as Go's `time.RFC3339Nano`, is
   still wrong.
 - **The size counts leaves, genesis included.** Four entries make a size of 5 (§2.4).
+- **A `tlog-checkpoint`'s second line is the size**, where a tally body has its name: that line alone tells
+  the three apart.
 
 ## `segments.json`
 
@@ -94,6 +101,51 @@ Points that are easy to get wrong:
 - **A frame's CRC is CRC-32C (Castagnoli)**, not the IEEE CRC-32 most libraries default to.
 - **The header-only segment is valid only as the last one** (§3), and its `prev_hash` is what the
   checkpoint of size 5 is matched against (§7 step 5).
+
+## `merkle.json`
+
+The RFC 6962 tree over the five leaves of `records.json` (SPEC §3.6), every hash as hex:
+
+| Key | What it is |
+| --- | --- |
+| `leaf_hashes_hex` | The leaves, which are `records.json`'s `leaf_hash_hex` in order. |
+| `roots` | The root of every size from 1 to 5. |
+| `inclusion` | The inclusion proof of every leaf in the tree of 5. |
+| `consistency` | The consistency proof from every size from 1 to 5, to 5. An equal size has an empty proof. |
+| `compact_ranges` | The compact range below every start from 1 to 5, largest subtree first. |
+
+To check an implementation: build the tree from the leaves and compare. Every entry was also checked
+against `golang.org/x/mod/sumdb/tlog` (`interop/merkle_test.go`), an independent implementation.
+
+Points that are easy to get wrong:
+
+- **The interior prefix is `0x01`**, and leaves keep their `0x00` (§2.3).
+- **The split is the largest power of two strictly below the size**, so a tree of 5 is `[0, 4)` and `[4, 5)`.
+- **A consistency proof from a power of two omits that size's root**, which the checker supplies (RFC 6962).
+- **Genesis is leaf 0**, so a range below 3 covers genesis and the first two entries.
+
+## `pruned-range.json`
+
+The `pruned.range` file (SPEC §3.6) a prune writes when it keeps records from 3 on and from 5 on, as `text`,
+for the compact ranges of `merkle.json` with the same `start`. A writer produces these bytes, and a reader
+accepts nothing else.
+
+## `witness.json`
+
+A **public test witness key**, `witness.example`, made from the seed `20 21 … 3f`, in both encodings with type
+`0x04` (SPEC §5.3), and `checkpoints.json`'s `tlog-checkpoint` cosigned with it (§5.5) at `time`
+1790000000: `cosignature_line` is the line the witness adds, and `note` the cosigned note.
+
+To check an implementation: open `note` under `keys.json`'s log key and this witness key; the cosignature
+verifies, at `time`. Verifying `records.json` with it, trusting this witness, is witnessed to 5.
+`github.com/transparency-dev/formats/note` opens it too.
+
+Points that are easy to get wrong:
+
+- **The cosigned message is not the note's text.** It is `cosignature/v1`, then `time <seconds>`, then the
+  text.
+- **The key id hashes the type byte `0x04`**, not `0x01`: the same seed as a log key has another id.
+- **The signature bytes are the time, 8 bytes big-endian, then the Ed25519 signature**, after the key id.
 
 ## `seal.json`
 

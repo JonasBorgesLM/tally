@@ -3,8 +3,9 @@
 **A tamper-evident audit log library for Go:** a hash chain, signed checkpoints anchored off the
 host, offline verification, and crypto-shredding for LGPD.
 
-> **Status: v0.1.0, the first release.** The library, the file store, the anchor spool, the vault and the CLI
-> are verified in CI, with the attack suite below, and were audited before the release ([docs/AUDIT.md](docs/AUDIT.md)).
+> **Status: v0.2.0.** The library, the file store, the anchor spool, the vault, the witness and the CLI are
+> verified in CI, with the attack suite below; v0.1.0 was audited before its release ([docs/AUDIT.md](docs/AUDIT.md)),
+> and v0.2's tree, checkpoints and witness were not audited apart from it.
 > In v0.x a minor version may break the API; the CHANGELOG lists every break. Progress is on the
 > [project board](https://github.com/users/JonasBorgesLM/projects/9).
 
@@ -85,7 +86,7 @@ means the test asserts what is *not* caught, so this table cannot claim more tha
 | T-06 Rewrite from a point, without the key | Partial, limit asserted | `attack.TestT06RewriteWithoutTheKey` | `ForkDetected` against the anchor. Without one, a rewrite that deletes the checkpoints after it is signed by the honest writer and verifies. |
 | T-07 Rewrite with the key, host compromised | Partial, limit asserted | `tally.TestT07RewriteWithTheKeyIsAForkAgainstTheAnchor` | `ForkDetected`, only against a checkpoint anchored before the rewrite. |
 | T-08 Roll back to an older checkpoint | Partial, limit asserted | `tally.TestT08RollbackIsSeenOnlyAgainstTheAnchor` | `TruncatedBelowCheckpoint` against the anchor; on the host's word alone, nothing. |
-| T-09 Split view | Partial, limit asserted | `attack.TestT09SplitView` | Two histories each verify against their own anchor; one shared anchor makes the second a fork. |
+| T-09 Split view | Partial, limit asserted | `attack.TestT09SplitView` | Two histories each verify against their own anchor; one shared anchor makes the second a fork, and a witness that cosigned only one makes the other `UnwitnessedTail` for a verifier that requires it. |
 | T-10 Splice across logs | Detected | `attack.TestT10SpliceAcrossLogs` | `MalformedRecord`: another log's `log_id`. |
 | T-11 Duplicate an entry | Detected | `attack.TestT11DuplicateAnEntry` | `SeqRegression`. |
 | T-12 Corruption by crash | Mitigated | `filestore.TestTruncatedAtEveryByte` | Cut at every byte, the log reopens to the frames before the cut, or refuses below a checkpoint. |

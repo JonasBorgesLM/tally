@@ -1,0 +1,13 @@
+{
+  "comment": "tally SPEC v1 pruned.range files (SPEC §3.6) over records.json, for the compact ranges of merkle.json. See README.md.",
+  "files": [
+    {
+      "start": 3,
+      "text": "tally pruned range\n3\nUiZItCgQNOM8A3AYWQYBSvjaRXVNr6JsoU+0JblWPBg=\nhoHAjKbExnw4Jks+gyzecU5LvA3Nh3aRL4Bq7x7nzQY=\n"
+    },
+    {
+      "start": 5,
+      "text": "tally pruned range\n5\nmsCbLdDCHuycZKI6tCvFQbbtgLo0M30u8ntbmAYkUZs=\nrWxhpesVy+nL6keAuu4y69biAQEZAv6jDde2KGkvqok=\n"
+    }
+  ]
+}

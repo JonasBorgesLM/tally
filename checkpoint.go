@@ -66,10 +66,19 @@ type checkpointReply struct {
 type lastCheckpoint struct {
 	size uint64
 	at   int64
+	// tlogSize is the size of the last tlog-checkpoint stored. Heartbeats at
+	// one size give the same tlog-checkpoint, byte for byte (Ed25519 is
+	// deterministic), so it is stored and published once per size.
+	tlogSize uint64
 }
 
 // Checkpoint signs and stores a checkpoint over every durable entry, and
-// returns it (RF-06). It runs on the writer, after any batch in progress, so
+// returns it (RF-06). A v0.2 checkpoint is a pair of notes (ADR-0006's
+// amendment, SPEC §5.2): a tlog-checkpoint, which a witness cosigns, and a
+// tally-heartbeat/v1 note, which carries the head and the time. Both are
+// stored and published; Checkpoint returns the heartbeat note, which names a
+// head and so serves FromCheckpoint and Prune. A log pruned before ranges
+// existed has no tree, and gets a v0.1 tally-chain/v1 checkpoint instead. It runs on the writer, after any batch in progress, so
 // it covers nothing that is not durable. It fails with ErrPoisoned on a
 // poisoned log, and with the Signer's error if signing fails; a failure to
 // store it poisons the log, as any store error does (ADR-0009).
@@ -117,22 +126,44 @@ func (l *Log) checkpoint(state string) (SignedCheckpoint, error) {
 	// recorded_at is the head's or a later clock reading (SPEC §5.2), and
 	// never earlier than the last checkpoint's.
 	at := l.recordedAt(max(l.head.prevTime, l.lastCP.at))
-	text := checkpointText(l.head.origin, l.head.size, l.head.prevLeaf, at, state)
 
-	cp, err := note.Sign([]byte(text), l.signer)
-	if err != nil {
-		return nil, fmt.Errorf("tally: signing a checkpoint: %w", err)
+	// The notes to store, in order: the tlog-checkpoint before the heartbeat
+	// note, so that the last one stored carries the time Open reads back.
+	var texts []string
+	tlogSize := l.lastCP.tlogSize
+	if root, ok := l.treeRoot(); ok {
+		if l.head.size != l.lastCP.tlogSize {
+			texts = append(texts, tlogText(l.head.origin, l.head.size, root))
+			tlogSize = l.head.size
+		}
+		texts = append(texts, heartbeatText(l.head.origin, l.head.size, l.head.prevLeaf, root, at, state))
+	} else {
+		texts = append(texts, checkpointText(l.head.origin, l.head.size, l.head.prevLeaf, at, state))
 	}
-	if err := l.store.PutCheckpoint(context.Background(), cp); err != nil {
-		l.poison(err)
-		return nil, l.err
+	// Every note is signed before any is stored: a signing error then loses
+	// this checkpoint whole, never half of a pair.
+	cps := make([]SignedCheckpoint, 0, len(texts))
+	for _, text := range texts {
+		cp, err := note.Sign([]byte(text), l.signer)
+		if err != nil {
+			return nil, fmt.Errorf("tally: signing a checkpoint: %w", err)
+		}
+		cps = append(cps, cp)
 	}
-	l.lastCP = lastCheckpoint{size: l.head.size, at: at}
+	for _, cp := range cps {
+		if err := l.store.PutCheckpoint(context.Background(), cp); err != nil {
+			l.poison(err)
+			return nil, l.err
+		}
+	}
+	l.lastCP = lastCheckpoint{size: l.head.size, at: at, tlogSize: tlogSize}
 	// Stored first, published after: an anchored checkpoint is always one
 	// the host has (architecture.md, "Checkpoint").
-	l.enqueue(cp)
+	for _, cp := range cps {
+		l.enqueue(cp)
+	}
 	l.checkSpace()
-	return cp, nil
+	return cps[len(cps)-1], nil
 }
 
 // autoCheckpoint signs a checkpoint on the entry trigger or the heartbeat,
@@ -162,6 +193,31 @@ func checkpointText(origin string, size uint64, head [32]byte, at int64, state s
 	b.WriteString(state)
 	b.WriteByte('\n')
 	return b.String()
+}
+
+// heartbeatText is SPEC §5.2's tally-heartbeat/v1 body: the chain body's
+// fields, with the Merkle root after the head (ADR-0006's amendment).
+func heartbeatText(origin string, size uint64, head, root [32]byte, at int64, state string) string {
+	var b strings.Builder
+	b.WriteString(origin)
+	b.WriteString("\n" + bodyHeartbeatV1 + "\n")
+	b.WriteString(strconv.FormatUint(size, 10))
+	b.WriteByte('\n')
+	b.WriteString(base64.StdEncoding.EncodeToString(head[:]))
+	b.WriteByte('\n')
+	b.WriteString(base64.StdEncoding.EncodeToString(root[:]))
+	b.WriteByte('\n')
+	b.WriteString(time.Unix(0, at).UTC().Format(checkpointTimeLayout))
+	b.WriteByte('\n')
+	b.WriteString(state)
+	b.WriteByte('\n')
+	return b.String()
+}
+
+// tlogText is SPEC §5.2's tlog-checkpoint body: origin, size and root, with
+// no extension lines.
+func tlogText(origin string, size uint64, root [32]byte) string {
+	return origin + "\n" + strconv.FormatUint(size, 10) + "\n" + base64.StdEncoding.EncodeToString(root[:]) + "\n"
 }
 
 // ErrStoredCheckpointMismatch means the stored log contradicts its own last
@@ -233,39 +289,21 @@ func signedBy(sigs []byte, name string, keyHash uint32) bool {
 	return false
 }
 
-// CheckpointSize returns the size line of a checkpoint (SPEC §5.2) **without
-// verifying its signature**. It is for a Store reading back the checkpoints it
-// stored itself, such as recovery refusing to truncate below the last one
-// (RF-20); a verifier reads checkpoints with Verify (SPEC §5.4).
+// CheckpointSize returns the size line of a checkpoint (SPEC §5.2), any of its
+// three bodies, **without verifying its signature**. It is for a Store reading
+// back the checkpoints it stored itself, such as recovery refusing to truncate
+// below the last one (RF-20); a verifier reads checkpoints with Verify (SPEC
+// §5.4).
 func CheckpointSize(cp SignedCheckpoint) (uint64, error) {
-	size, _, ok := parseCheckpointHead(cp)
-	if !ok {
+	split := bytes.LastIndex(cp, []byte("\n\n"))
+	if split < 0 {
+		return 0, errors.New("tally: a stored checkpoint is not a signed note")
+	}
+	c, f := parseCheckpointBody(cp[:split+1])
+	if f != nil {
 		return 0, errors.New("tally: a stored checkpoint does not parse")
 	}
-	return size, nil
-}
-
-// parseCheckpointHead reads the size and recorded_at lines of a checkpoint the
-// log itself stored. It is not a verifier's parser: Verify reads checkpoints
-// by SPEC §5.4 (#27).
-func parseCheckpointHead(cp SignedCheckpoint) (size uint64, at int64, ok bool) {
-	split := strings.LastIndex(string(cp), "\n\n")
-	if split < 0 {
-		return 0, 0, false
-	}
-	lines := strings.Split(string(cp[:split]), "\n")
-	if len(lines) != 6 {
-		return 0, 0, false
-	}
-	size, err := strconv.ParseUint(lines[2], 10, 64)
-	if err != nil {
-		return 0, 0, false
-	}
-	t, err := time.Parse(checkpointTimeLayout, lines[4])
-	if err != nil {
-		return 0, 0, false
-	}
-	return size, t.UnixNano(), true
+	return c.size, nil
 }
 
 // dueByEntries reports whether enough entries have been made durable since
@@ -273,4 +311,13 @@ func parseCheckpointHead(cp SignedCheckpoint) (size uint64, at int64, ok bool) {
 func (l *Log) dueByEntries() bool {
 	n := l.cfg.checkpointEntries
 	return n > 0 && l.head.size-l.lastCP.size >= n
+}
+
+// treeRoot is the Merkle root of every durable leaf, if the tree is known.
+func (l *Log) treeRoot() ([32]byte, bool) {
+	if l.head.tree == nil {
+		return [32]byte{}, false
+	}
+	root, err := l.head.tree.Root()
+	return root, err == nil
 }

@@ -665,3 +665,173 @@ func age(t *testing.T, dir string, d time.Duration) {
 		}
 	}
 }
+
+// "Upgrading from v0.1" (#60): a log a v0.1 writer wrote, as its bytes
+// (testdata/vectors/segments.json), with its tally-chain/v1 checkpoint in the
+// anchor. The v0.2 writer reopens it, appends and closes; it stores and
+// publishes the new pairs beside the old checkpoint, nothing stored is
+// rewritten, and the log verifies against the anchor, all of it attested.
+func TestDrillUpgradeFromV01(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	dir, anchorDir := filepath.Join(root, "log"), filepath.Join(root, "anchor")
+	for _, d := range []string{dir, anchorDir} {
+		if err := os.Mkdir(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// The v0.1 log, byte for byte, and its checkpoint in the anchor.
+	raw, err := os.ReadFile("../../testdata/vectors/segments.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vec struct {
+		Files []struct{ Name, Hex string } `json:"files"`
+	}
+	if err = json.Unmarshal(raw, &vec); err != nil {
+		t.Fatal(err)
+	}
+	before := map[string][]byte{}
+	for _, f := range vec.Files {
+		b, herr := hex.DecodeString(f.Hex)
+		if herr != nil {
+			t.Fatal(herr)
+		}
+		before[f.Name] = b
+		if err = os.WriteFile(filepath.Join(dir, f.Name), b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a, err := anchor.NewDir(anchorDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := filestore.OpenReader(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for cp, cerr := range r.Checkpoints(ctx) {
+		if cerr != nil {
+			t.Fatal(cerr)
+		}
+		if !bytes.Contains(cp, []byte("\ntally-chain/v1\n")) {
+			t.Fatalf("the vector's checkpoint is not v0.1's:\n%s", cp)
+		}
+		if err = a.Publish(ctx, cp); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// The v0.2 writer reopens it, appends and closes, publishing to the anchor.
+	s, err := filestore.Open(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l, err := tally.Open(ctx, s, signer(t), tally.WithAnchors(a), tally.WithCheckpointEvery(0, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range 3 {
+		ev := tally.Event{ID: tally.EventID(fmt.Sprintf("upgrade-%d", i)), OccurredAt: time.Unix(1_800_000_000, 0),
+			Actor: tally.System(), Action: "user.login", Outcome: tally.OutcomeSuccess}
+		if _, err = l.Append(ctx, ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = l.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Nothing v0.1 stored was rewritten: segment 0 is the same bytes.
+	seg0, err := os.ReadFile(filepath.Join(dir, "0000000000000000.tlog")) // #nosec G304 -- a drill's own file
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(seg0, before["0000000000000000.tlog"]) {
+		t.Fatal("the v0.2 writer rewrote segment 0")
+	}
+	kinds := map[string]int{}
+	for cp, cerr := range a.Checkpoints(ctx) {
+		if cerr != nil {
+			t.Fatal(cerr)
+		}
+		switch {
+		case bytes.Contains(cp, []byte("\ntally-chain/v1\n")):
+			kinds["v0.1"]++
+		case bytes.Contains(cp, []byte("\ntally-heartbeat/v1\n")):
+			kinds["heartbeat"]++
+		case isTlog(cp):
+			kinds["tlog"]++
+		}
+	}
+	if kinds["v0.1"] != 1 || kinds["heartbeat"] != 1 || kinds["tlog"] != 1 {
+		t.Fatalf("the anchor holds %v, want the v0.1 checkpoint and one new pair", kinds)
+	}
+
+	out, stderr, code := cli(t, "verify", "--dir", dir, "--key", tallytest.TestVerifierKey, "--anchor", anchorDir,
+		"--require-fully-attested")
+	if code != exitIntact || line(t, out, "attested") != "8" {
+		t.Fatalf("verify: status %d\n%s%s", code, out, stderr)
+	}
+	if _, _, code = cli(t, "checkpoint", "--dir", dir, "--key", tallytest.TestVerifierKey, "--tlog"); code != exitIntact {
+		t.Fatalf("checkpoint --tlog after the upgrade: status %d", code)
+	}
+}
+
+// "A witness on a second machine" (#61, ADR-0021), against a real witness
+// elsewhere: TALLY_DRILL_WITNESS_URL is its base URL and
+// TALLY_DRILL_WITNESS_KEY its verifier key, serving the published test log
+// key with no state for it yet. Skipped otherwise; it was run against a
+// Raspberry Pi 5, and the RUNBOOK records the output.
+//
+// The host keeps one history for the witness and builds a fork from a copy
+// of it, same genesis, same key. The witness refuses the fork, and a verifier
+// requiring the witness passes the honest history and convicts the fork.
+func TestDrillWitnessOnASecondMachine(t *testing.T) {
+	url, wvk := os.Getenv("TALLY_DRILL_WITNESS_URL"), os.Getenv("TALLY_DRILL_WITNESS_KEY")
+	if url == "" || wvk == "" {
+		t.Skip("needs a witness elsewhere: TALLY_DRILL_WITNESS_URL and TALLY_DRILL_WITNESS_KEY")
+	}
+	key := tallytest.TestVerifierKey
+	root := t.TempDir()
+	honest, spool, forkSpool := filepath.Join(root, "log"), filepath.Join(root, "spool"), filepath.Join(root, "fork-spool")
+	for _, d := range []string{spool, forkSpool} {
+		if err := os.Mkdir(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	push := func(dir, anchorDir string) (string, string, int) {
+		out, stderr, code := cli(t, "witness", "push", "--dir", dir, "--key", key, "--witness", url, "--witness-key", wvk, "--anchor", anchorDir)
+		t.Logf("$ tally witness push --dir %s\n%s%sstatus %d", filepath.Base(dir), out, stderr, code)
+		return out, stderr, code
+	}
+	verifyWitnessed := func(dir, anchorDir string) (string, int) {
+		out, stderr, code := cli(t, "verify", "--dir", dir, "--key", key, "--anchor", anchorDir, "--witness", wvk, "--require-witnessed")
+		t.Logf("$ tally verify --dir %s --require-witnessed\n%s%sstatus %d", filepath.Base(dir), out, stderr, code)
+		return out, code
+	}
+
+	writeLog(t, honest, spool, "a", 6, true)
+	if _, _, code := push(honest, spool); code != exitIntact {
+		t.Fatal("the first push was not witnessed; is the witness's state for example.com/log empty?")
+	}
+	fork := filepath.Join(root, "fork")
+	copyDir(t, honest, fork) // same genesis, same first entries, same key
+
+	writeLog(t, honest, spool, "b", 4, true)
+	if _, _, code := push(honest, spool); code != exitIntact {
+		t.Fatal("the honest history's growth was not witnessed")
+	}
+	writeLog(t, fork, forkSpool, "x", 4, true)
+	if _, stderr, code := push(fork, forkSpool); code != exitViolation || !strings.Contains(stderr, "refused the log's history") {
+		t.Fatalf("the fork was not refused by the witness: status %d", code)
+	}
+
+	if _, code := verifyWitnessed(honest, spool); code != exitIntact {
+		t.Fatal("the honest history does not verify witnessed")
+	}
+	if out, code := verifyWitnessed(fork, forkSpool); code != exitViolation || !strings.Contains(out, "UnwitnessedTail") {
+		t.Fatal("the fork was not convicted as unwitnessed")
+	}
+}

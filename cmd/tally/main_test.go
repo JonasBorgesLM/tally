@@ -345,7 +345,7 @@ func TestAFieldCannotForgeALine(t *testing.T) {
 		Kind: tally.MalformedRecord, Seq: 2, Note: "bad frame\nresult intact\n\x1b[2Kok",
 	}}}
 	var out bytes.Buffer
-	if code := printReport(&out, rep); code != exitViolation {
+	if code := printReport(&out, rep, false); code != exitViolation {
 		t.Fatalf("status %d, want 1", code)
 	}
 	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")

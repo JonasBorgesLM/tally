@@ -10,6 +10,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/JonasBorgesLM/tally/internal/merkle"
 )
 
 // Errors returned by a Log.
@@ -256,11 +258,17 @@ func (l *Log) load(ctx context.Context, origin string) error {
 			return nil
 		}
 		compared = true
-		if l.head.prevLeaf != stored.head {
+		if stored.hasHead && l.head.prevLeaf != stored.head {
 			return fmt.Errorf("%w: the leaf at %d differs from its head", ErrStoredCheckpointMismatch, stored.size)
+		}
+		if stored.hasRoot && l.head.tree != nil {
+			if root, err := l.head.tree.Root(); err == nil && root != stored.root {
+				return fmt.Errorf("%w: the tree at %d differs from its root", ErrStoredCheckpointMismatch, stored.size)
+			}
 		}
 		return nil
 	}
+	l.head.tree = new(merkle.Range) // from leaf 0, unless a pruned start replaces it
 	first := true
 	for r, err := range l.store.Records(ctx, 0) {
 		if err != nil {
@@ -275,6 +283,9 @@ func (l *Log) load(ctx context.Context, origin string) error {
 				return fmt.Errorf("tally: the first stored record, %d, is not a valid entry", r.Seq)
 			}
 			l.head = chainState{size: r.Seq, logID: e.logID, origin: origin, prevLeaf: e.prevHash, prevTime: math.MinInt64}
+			if l.head.tree, l.head.pending, err = storedTree(ctx, l.store, r.Seq); err != nil {
+				return err
+			}
 			if err := compare(); err != nil {
 				return err
 			}
@@ -311,6 +322,10 @@ func (l *Log) load(ctx context.Context, origin string) error {
 		l.lastCP = lastCheckpoint{size: 1} // the entry trigger counts entries, not genesis
 		if stored != nil {
 			l.lastCP = lastCheckpoint{size: min(stored.size, l.head.size), at: stored.at}
+			if stored.hasRoot {
+				// The pair's tlog-checkpoint was stored before this note.
+				l.lastCP.tlogSize = stored.size
+			}
 		}
 		return nil
 	}
@@ -641,5 +656,38 @@ func (l *Log) refuseQueued() {
 		default:
 			return
 		}
+	}
+}
+
+// storedTree returns the Merkle tree's compact range for a log whose first
+// stored record is first > 0 (#60): from the store's range when it starts
+// there, or pending until the chain reaches a range that starts above it,
+// as a crash during a prune leaves. Without a range the tree is unknown and
+// both are nil. A range that starts below first stands for leaves that are
+// gone and not in it: segments were removed outside Prune, and the log is
+// refused.
+func storedTree(ctx context.Context, src Source, first uint64) (tree, pending *merkle.Range, err error) {
+	cr, ok := src.(CompactRanger)
+	if !ok {
+		return nil, nil, nil
+	}
+	start, hashes, ok, err := cr.CompactRange(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("tally: reading the stored compact range: %w", err)
+	}
+	if !ok {
+		return nil, nil, nil
+	}
+	rng, err := merkle.NewRange(start, hashes)
+	if err != nil {
+		return nil, nil, fmt.Errorf("tally: the stored compact range: %w", err)
+	}
+	switch {
+	case start == first:
+		return rng, nil, nil
+	case start > first:
+		return nil, rng, nil
+	default:
+		return nil, nil, fmt.Errorf("tally: the stored compact range starts at %d, below the first stored record %d", start, first)
 	}
 }

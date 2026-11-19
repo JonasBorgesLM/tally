@@ -3,7 +3,7 @@
 Guidance for Claude Code in this repository. The general engineering rules are in
 `~/.claude/CLAUDE.md`; this file carries only what is true of tally.
 
-**Status: v0.1.0.** The library, `filestore`, `anchor`, `seal` and the CLI are released; in v0.x a minor
+**Status: v0.2.0.** The library, `filestore`, `anchor`, `seal`, `witness` and the CLI are released; in v0.x a minor
 version may break the API, and the CHANGELOG lists each break. `REQUIREMENTS.md`, `docs/SPEC.md`, `docs/THREAT-MODEL.md` and `docs/architecture.md`
 are what the code is checked against.
 Work is tracked on the [project board](https://github.com/users/JonasBorgesLM/projects/9).
@@ -28,14 +28,16 @@ detects; it does not prevent. Nothing past the last trusted checkpoint is covere
 ## Architecture
 
 ```
-cmd/tally ──▶ tally, filestore, anchor
-filestore, anchor, seal, tallytest ──▶ tally ──▶ internal/wire, internal/note
-filestore ──▶ internal/fsx
+cmd/tally ──▶ tally, filestore, anchor, witness, internal/merkle
+filestore, anchor, seal, tallytest ──▶ tally ──▶ internal/wire, internal/note, internal/merkle
+filestore ──▶ internal/fsx, internal/merkle
 seal ──▶ internal/fsx, internal/wire
+witness ──▶ internal/fsx, internal/merkle, internal/note
 ```
 
 - The root imports only `internal/*`. `internal/*` imports nothing above it.
-- The module is stdlib only (RNF-01). `interop/` has its own `go.mod`, tests only, and may depend on `golang.org/x/mod`.
+- The module is stdlib only (RNF-01). `interop/` has its own `go.mod`, tests only, and may depend on `golang.org/x/mod`
+  and `github.com/transparency-dev/formats` (the witness cosignature, #61), each an independent implementation.
 - A new package gets added to `KNOWN` in `check-boundaries.sh`, or it fails.
 
 ## Commands

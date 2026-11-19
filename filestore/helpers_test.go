@@ -8,7 +8,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -181,8 +180,9 @@ func vectorBodies(t *testing.T) [][]byte {
 	return bodies
 }
 
-// vectorCheckpoint returns the signed note of testdata/vectors/checkpoints.json,
-// over the head of records.json.
+// vectorCheckpoint returns the tally-chain/v1 note of
+// testdata/vectors/checkpoints.json, over the head of records.json: the one
+// segments.json stores.
 func vectorCheckpoint(t *testing.T) tally.SignedCheckpoint {
 	t.Helper()
 	b, err := os.ReadFile("../testdata/vectors/checkpoints.json")
@@ -191,16 +191,20 @@ func vectorCheckpoint(t *testing.T) tally.SignedCheckpoint {
 	}
 	var file struct {
 		Checkpoints []struct {
+			Kind string `json:"kind"`
 			Note string `json:"note"`
 		} `json:"checkpoints"`
 	}
 	if err := json.Unmarshal(b, &file); err != nil {
 		t.Fatal(err)
 	}
-	if len(file.Checkpoints) != 1 {
-		t.Fatalf("checkpoints.json holds %d checkpoints, want 1", len(file.Checkpoints))
+	for _, c := range file.Checkpoints {
+		if c.Kind == "tally-chain/v1" {
+			return tally.SignedCheckpoint(c.Note)
+		}
 	}
-	return tally.SignedCheckpoint(file.Checkpoints[0].Note)
+	t.Fatal("checkpoints.json holds no tally-chain/v1 checkpoint")
+	return nil
 }
 
 func records(bodies [][]byte, from uint64) []tally.Record {
@@ -232,15 +236,19 @@ func verifiers(t *testing.T) tally.Verifiers {
 // checkpointSize is line 3 of a checkpoint's text (SPEC §5.2).
 func checkpointSize(t *testing.T, cp tally.SignedCheckpoint) uint64 {
 	t.Helper()
-	lines := strings.SplitN(string(cp), "\n", 4)
-	if len(lines) < 4 {
-		t.Fatalf("not a checkpoint: %q", cp)
-	}
-	n, err := strconv.ParseUint(lines[2], 10, 64)
+	n, err := tally.CheckpointSize(cp)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("not a checkpoint: %v: %q", err, cp)
 	}
 	return n
+}
+
+// isTlog reports whether cp's body is a tlog-checkpoint, which names no head
+// and so cannot be pruned at (#60): three lines, the second a size.
+func isTlog(cp tally.SignedCheckpoint) bool {
+	text, _, ok := strings.Cut(string(cp), "\n\n")
+	lines := strings.Split(text, "\n")
+	return ok && len(lines) == 3 && !strings.HasPrefix(lines[1], "tally-")
 }
 
 // segmentFirsts lists the first_seq of every segment file in dir.

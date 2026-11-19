@@ -1,11 +1,27 @@
 {
-  "comment": "tally SPEC v1 checkpoint vector over records.json, signed with the PUBLIC test key of keys.json. See README.md.",
+  "comment": "tally SPEC checkpoint vectors over records.json, one of each body (tally-chain/v1, tally-heartbeat/v1, tlog-checkpoint), signed with the PUBLIC test key of keys.json. See README.md.",
   "checkpoints": [
     {
+      "kind": "tally-chain/v1",
       "size": "5",
       "head_hex": "ad6c61a5eb15cbe9cbea4780baee32ebd6e201011902fea30dd7b628692faa89",
       "text": "example.com/log\ntally-chain/v1\n5\nrWxhpesVy+nL6keAuu4y69biAQEZAv6jDde2KGkvqok=\n1972-04-20T13:17:39.790382896Z\nclosed\n",
       "note": "example.com/log\ntally-chain/v1\n5\nrWxhpesVy+nL6keAuu4y69biAQEZAv6jDde2KGkvqok=\n1972-04-20T13:17:39.790382896Z\nclosed\n\n— example.com/log 1FXFIa2o0yfhxQByOOzLQSoeufFbs0rtYQfFlN/sdjbVXBIK+iEWDMOY80b3omQ1TouvhCkRBtkbBGLk9bxQrim87Ao=\n"
+    },
+    {
+      "kind": "tally-heartbeat/v1",
+      "size": "5",
+      "head_hex": "ad6c61a5eb15cbe9cbea4780baee32ebd6e201011902fea30dd7b628692faa89",
+      "root_hex": "06f4966cdd5fb8bfcaf168215eea762e58e8e085b760b05476a0c4d0b2642ea2",
+      "text": "example.com/log\ntally-heartbeat/v1\n5\nrWxhpesVy+nL6keAuu4y69biAQEZAv6jDde2KGkvqok=\nBvSWbN1fuL/K8WghXup2Lljo4IW3YLBUdqDE0LJkLqI=\n1972-04-20T13:17:39.790382896Z\nclosed\n",
+      "note": "example.com/log\ntally-heartbeat/v1\n5\nrWxhpesVy+nL6keAuu4y69biAQEZAv6jDde2KGkvqok=\nBvSWbN1fuL/K8WghXup2Lljo4IW3YLBUdqDE0LJkLqI=\n1972-04-20T13:17:39.790382896Z\nclosed\n\n— example.com/log 1FXFIerQ+UdigK0LECPrOu36KKZG0NtnJPkCl29qTB3lrrOmhsOtEx/vOs8hEkXlK5Hp9c6bek+5vt9gRyIM9NOKJwU=\n"
+    },
+    {
+      "kind": "tlog-checkpoint",
+      "size": "5",
+      "root_hex": "06f4966cdd5fb8bfcaf168215eea762e58e8e085b760b05476a0c4d0b2642ea2",
+      "text": "example.com/log\n5\nBvSWbN1fuL/K8WghXup2Lljo4IW3YLBUdqDE0LJkLqI=\n",
+      "note": "example.com/log\n5\nBvSWbN1fuL/K8WghXup2Lljo4IW3YLBUdqDE0LJkLqI=\n\n— example.com/log 1FXFIfg7Ys9wjSvJpR4h0m9GhshmYFozjRC/Tt9gKDOThLCXHCmLh+qahbRMtQx4qQidLoJgm0gbksGu5sIiVsFm/go=\n"
     }
   ]
 }

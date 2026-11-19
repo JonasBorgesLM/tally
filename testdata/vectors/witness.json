@@ -1,0 +1,11 @@
+{
+  "comment": "tally SPEC witness vector: a PUBLIC test witness key, never for real use, and the tlog-checkpoint of checkpoints.json cosigned with it (cosignature/v1). See README.md.",
+  "name": "witness.example",
+  "seed_hex": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+  "key_id_hex": "790a8a0d",
+  "verifier_key": "witness.example+790a8a0d+BCmsuuFBvMrwsi4alNNNC8c2HlJtC/4SyJeUvJMilm3X",
+  "signer_key": "PRIVATE+KEY+witness.example+790a8a0d+BCAhIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzg5Ojs8PT4/",
+  "time": "1790000000",
+  "cosignature_line": "— witness.example eQqKDQAAAABqsTuAB2ZEUB+vtiLAlfUrS/0tnKcHwb4tYivwEfd3n4cV8WBoRsd0UPruVNfyc/ED+wEFcLwen2tsKuhFD85coaE8Cg==\n",
+  "note": "example.com/log\n5\nBvSWbN1fuL/K8WghXup2Lljo4IW3YLBUdqDE0LJkLqI=\n\n— example.com/log 1FXFIfg7Ys9wjSvJpR4h0m9GhshmYFozjRC/Tt9gKDOThLCXHCmLh+qahbRMtQx4qQidLoJgm0gbksGu5sIiVsFm/go=\n— witness.example eQqKDQAAAABqsTuAB2ZEUB+vtiLAlfUrS/0tnKcHwb4tYivwEfd3n4cV8WBoRsd0UPruVNfyc/ED+wEFcLwen2tsKuhFD85coaE8Cg==\n"
+}

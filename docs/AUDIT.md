@@ -44,7 +44,8 @@ covered.
   says so.
 - **`TestASignerNeverPrintsItsKey` in `internal/note` is flaky.** It looks for the decimal of one key byte,
   `171`, and a pointer address printed by `%d` can contain it. It failed once in this work, and passed 60 times in
-  a row since. Not yet fixed.
+  a row since. **Fixed** in #136: the bare pattern is gone, and the seed as `%v` and `%d` print it is still
+  checked.
 
 ## What held
 

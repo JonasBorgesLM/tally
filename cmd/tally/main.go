@@ -3,7 +3,7 @@
 //
 //	tally verify     --dir DIR --key VKEY [--anchor DIR] [--require-fully-attested] ...
 //	tally head       --dir DIR
-//	tally checkpoint --dir DIR --key VKEY
+//	tally checkpoint --dir DIR --key VKEY [--tlog]
 //	tally keygen     --name ORIGIN --out PREFIX
 //	tally prune      --dir DIR --key VKEY --anchor DIR --checkpoint FILE
 //	tally export     --dir DIR [--format jsonl|bundle] [--out FILE] ...
@@ -32,6 +32,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"syscall"
 	"unicode"
 	"unicode/utf8"
 )
@@ -44,7 +45,8 @@ const (
 )
 
 func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	// SIGTERM too: a witness run by a service manager is stopped with it.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	code := run(ctx, os.Args[1:], os.Stdout, os.Stderr)
 	stop()
 	os.Exit(code)
@@ -54,13 +56,16 @@ const usage = `usage:
   tally verify     --dir DIR --key VKEY [--key-file FILE] [--anchor DIR]
                    [--require-fully-attested] [--from FILE]
                    [--heartbeat DURATION --tolerance DURATION]
+                   [--witness WKEY [--witness-quorum N] [--require-witnessed]]
   tally head       --dir DIR
-  tally checkpoint --dir DIR --key VKEY [--key-file FILE]
-  tally keygen     --name ORIGIN --out PREFIX
+  tally checkpoint --dir DIR --key VKEY [--key-file FILE] [--tlog]
+  tally keygen     --name ORIGIN --out PREFIX [--witness]
   tally prune      --dir DIR --key VKEY --anchor DIR --checkpoint FILE
   tally export     --dir DIR [--format jsonl] [--out FILE]
   tally export     --dir DIR --format bundle --out FILE.tar --key VKEY [--anchor DIR]
   tally bundle-check FILE.tar
+  tally witness serve --dir STATE --key-file FILE --log VKEY [--addr :7380]
+  tally witness push  --dir DIR --key VKEY --witness URL --witness-key WKEY --anchor DIR
   tally version
 
 exit status: 0 intact, 1 violation, 2 usage or IO error
@@ -85,6 +90,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return cmdPrune(ctx, args[1:], stdout, stderr)
 	case "export":
 		return cmdExport(ctx, args[1:], stdout, stderr)
+	case "witness":
+		return cmdWitness(ctx, args[1:], stdout, stderr)
 	case "bundle-check":
 		return cmdBundleCheck(args[1:], stdout, stderr)
 	case "version":

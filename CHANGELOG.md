@@ -8,6 +8,83 @@ The release workflow will refuse to publish a tag with no section here.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-19
+
+M11: the Merkle tree over the leaves v0.1 already stored, checkpoints as `tlog-checkpoint` plus a heartbeat note,
+and a witness on another machine, which turns split view (T-09) from undetected into partial. Nothing stored is
+rewritten, and every API change is an addition.
+
+### Changed
+
+- ⚠️ **A v0.1 verifier cannot read a v0.2 log.** The v0.2 writer signs each checkpoint as two new notes (SPEC §5.2),
+  which `tally verify` v0.1.0 reports as `MalformedRecord` and exits 1, though the log is intact; checked by
+  running the v0.1.0 release on a v0.2 log. Upgrade every verifier and monitor before any writer (RUNBOOK,
+  "Upgrading from v0.1"). A v0.2 verifier reads v0.1 logs unchanged.
+- ⚠️ **The anchor holds two files per checkpoint, and `WithAnchorQueue` counts notes:** its default of 64 now
+  holds 32 checkpoints.
+- **`Log.Checkpoint` returns the heartbeat note**, and `tally checkpoint` prints it; `tally prune` refuses a
+  `tlog-checkpoint`.
+- **`Verify` builds the tree as it reads**: 13% slower on an Apple M1 (1.26M to 1.10M entries/s), above
+  RNF-03's 100k.
+
+### The API changes (generated)
+
+`gorelease -base=v0.1.0`, all compatible:
+
+- `github.com/JonasBorgesLM/tally`: `CompactRanger`, `CountCosignatures`, `Report.WitnessedSize`,
+  `UnwitnessedTail`, `WithRequireWitnessed`, `WithWitnesses` added.
+- `github.com/JonasBorgesLM/tally/filestore`: `(*Reader).CompactRange`, `(*Store).CompactRange` added.
+- `github.com/JonasBorgesLM/tally/witness`: package added.
+
+### Added
+
+- **A witness on a second machine, run** (#61): RUNBOOK gains "A witness on a second machine", executed against a
+  Raspberry Pi 5: the witness refused a fork of a witnessed log, same genesis and key, and the verifier requiring
+  it convicted the fork as `UnwitnessedTail`. T-09 moves from undetected to partial: detected by a verifier that
+  requires the witness, with the residual stated, and the attack suite asserts both halves.
+- **The witness** (#61, ADR-0021): package `witness`, a c2sp.org/tlog-witness `add-checkpoint` server that cosigns a
+  log's `tlog-checkpoint` only when a consistency proof ties it to the last one it cosigned, and writes its state
+  durably before it answers, under one lock with the size check. `tally witness serve` runs it on the witness's
+  machine; `tally witness push` runs on the log's host: it learns the witness's size from a `409`, builds the
+  proof from the stored leaves and the pruned range, checks the cosignature it gets back, and publishes the
+  cosigned checkpoint to the anchor spool. A push refuses, status 1, when the witness holds more than the log
+  (a rollback) or a prune left it behind. `tally keygen --witness` makes a witness key; `tally.CountCosignatures`
+  counts a checkpoint's trusted cosignatures. `tally` now also stops on SIGTERM.
+- **Witness cosignatures in `Verify`** (#61, ADR-0021): `WithWitnesses(keys, quorum)` trusts c2sp.org/tlog-cosignature
+  `cosignature/v1` cosignatures from witness keys (type `0x04`); `Report.WitnessedSize` is the largest matched
+  checkpoint a quorum cosigned, and `WithRequireWitnessed` makes the rest `UnwitnessedTail`, a new violation kind,
+  where split view (T-09) shows. A bad cosignature from a trusted witness is `BadSignature`, and a note signed only
+  by a witness is `UnknownKey`. `tally verify` gains `--witness`, `--witness-quorum` and `--require-witnessed`.
+  SPEC §5.5, and `testdata/vectors/witness.json`, checked against `transparency-dev/formats`.
+
+- The RFC 6962 Merkle tree over the existing leaves, with inclusion and consistency proofs (#59, ADR-0002). A
+  v0.1 log needs nothing rewritten. It is internal until checkpoints carry its root (#60).
+- **CLI for v0.2** (#60): `tally head` prints the Merkle root, from leaf 0 or the pruned range, or says it is
+  unknown for a log pruned by v0.1; `tally checkpoint --tlog` prints the newest `tlog-checkpoint`, for a witness,
+  where the default stays the newest heartbeat note. RUNBOOK gains "Upgrading from v0.1", executed against a
+  v0.1 log's own bytes: verifiers first, two anchor files per checkpoint, the queue sized in notes, and prune
+  from a heartbeat note.
+- **The writer signs v0.2 checkpoints** (#60): each checkpoint is a `tlog-checkpoint` and a `tally-heartbeat/v1`
+  note of the same size, stored and published in that order. `Log.Checkpoint` returns the heartbeat note, which
+  names a head, so it serves `FromCheckpoint` and `Prune` as before; `tally prune` refuses a `tlog-checkpoint`
+  and says to use the heartbeat note of its size. Heartbeats at one size share one `tlog-checkpoint`, stored and
+  published once. A log pruned by v0.1, which has no tree, keeps getting `tally-chain/v1` checkpoints.
+  **The anchor queue counts notes:** the default of 64 holds 32 checkpoints, and a queue of 1 keeps only the
+  newest heartbeat note.
+- The v0.2 checkpoint bodies (ADR-0006's amendment, SPEC §5.2): a plain `tlog-checkpoint` (origin, size, Merkle
+  root) and a `tally-heartbeat/v1` note (the v0.1 fields plus the root). `Verify` accepts them beside v0.1's
+  `tally-chain/v1` in one log. It compares a root with the tree when it knows the tree: from leaf 0, or from a
+  pruned range that `filestore.Reader` now also gives. Two notes of one size with different roots are a fork.
+  A `tlog-checkpoint` carries no time, so it takes no part in the heartbeat, and it cannot be a start for
+  `FromCheckpoint`; the heartbeat note of its size can. Building the tree
+  costs `Verify` 13% on an Apple M1 (1.26M to 1.10M entries/s), still above RNF-03's 100k.
+- `tally.CompactRanger`, an optional interface a `Source` implements when it kept the compact range of what it
+  pruned; `filestore.Store` does. A `Log` keeps the Merkle root of its leaves from it, or from leaf 0, so that
+  the v0.2 checkpoints can sign a root without rereading the log (#60). Reopening costs no measurable time more.
+- `filestore.Prune` writes `pruned.range`, the compact range below the first record it keeps, before removing
+  anything (SPEC §3.6, ADR-0012's amendment). Proofs still reach the records kept, and from every size at or
+  above the prune. A log pruned by v0.1 is pruned further without one.
+
 ## [0.1.0] - 2026-11-18
 
 The first release: the tamper-evident log, the file store, the anchor spool, crypto-shredding through `seal`, and

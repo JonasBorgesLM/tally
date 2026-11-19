@@ -69,7 +69,7 @@ func vectorCheckpointNote(f *testing.F) []byte {
 	if err := json.Unmarshal(raw, &v); err != nil {
 		f.Fatal(err)
 	}
-	return []byte(v.Checkpoints[0].Note)
+	return []byte(v.Checkpoints[0].Note) // the tally-chain/v1 one; the other bodies are seeded below
 }
 
 // FuzzCheckpoint drives SPEC §5.4, a whole signed checkpoint, with arbitrary
@@ -90,7 +90,7 @@ func FuzzCheckpoint(f *testing.F) {
 	f.Add(seed[:len(seed)/2])
 	f.Add(bytes.Replace(seed, []byte("\n\n"), []byte("\n"), 1))
 	f.Fuzz(func(t *testing.T, in []byte) {
-		c, fail := readCheckpoint(bytes.Clone(in), keys)
+		c, fail := readCheckpoint(bytes.Clone(in), keys, nil)
 		if fail != nil {
 			switch fail.Kind {
 			case MalformedRecord, NonCanonicalEncoding, BadSignature, UnknownKey:
@@ -123,6 +123,8 @@ func FuzzCheckpointBody(f *testing.F) {
 	seed := vectorCheckpointNote(f)
 	f.Add(seed[:bytes.Index(seed, []byte("\n\n"))+1])
 	f.Add([]byte("example.com/log\ntally-chain/v1\n1\nAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n2026-11-16T12:00:00.000000000Z\nopen\n"))
+	f.Add([]byte("example.com/log\ntally-heartbeat/v1\n1\nAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\nAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n2026-11-16T12:00:00.000000000Z\nclosed\n"))
+	f.Add([]byte("example.com/log\n1\nAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n"))
 	f.Fuzz(func(t *testing.T, in []byte) {
 		c, fail := parseCheckpointBody(bytes.Clone(in))
 		if fail != nil {
@@ -135,7 +137,16 @@ func FuzzCheckpointBody(f *testing.F) {
 		if c.closed {
 			state = stateClosed
 		}
-		if text := checkpointText(c.origin, c.size, c.head, c.at, state); text != string(in) {
+		var text string
+		switch {
+		case c.hasHead && c.hasRoot:
+			text = heartbeatText(c.origin, c.size, c.head, c.root, c.at, state)
+		case c.hasHead:
+			text = checkpointText(c.origin, c.size, c.head, c.at, state)
+		default:
+			text = tlogText(c.origin, c.size, c.root)
+		}
+		if text != string(in) {
 			t.Fatalf("an accepted body is not canonical\ninput %q\nwant  %q", in, text)
 		}
 	})

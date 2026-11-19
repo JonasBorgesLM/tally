@@ -219,8 +219,9 @@ possible** (IO, misuse); an integrity violation is in the `Report` with
 Failure kinds: `PrevHashMismatch`, `SeqGap`, `SeqRegression`, `TimeRegression`,
 `NonCanonicalEncoding`, `MalformedRecord`, `BadSignature`, `UnknownKey`,
 `CheckpointMismatch`, `TruncatedBelowCheckpoint`, `ForkDetected`, `HeartbeatGap`,
-`PrunedWithoutTrustedCheckpoint`, and `UnattestedTail`, reported only under
-`WithRequireFullyAttested` (ADR-0018).
+`PrunedWithoutTrustedCheckpoint`, `UnattestedTail`, reported only under
+`WithRequireFullyAttested` (ADR-0018), and `UnwitnessedTail`, reported only under
+`WithRequireWitnessed` (ADR-0021).
 
 v0.2's `LeafHashMismatch` is removed: the leaf hash is not stored, so there is
 nothing to compare it with. A changed entry surfaces as `PrevHashMismatch` on its
@@ -263,7 +264,7 @@ CLI exit codes: `0` intact · `1` violation · `2` usage or IO error.
 | --- | --- |
 | **RNF-01** | Go 1.26 floor, the oldest release still receiving security fixes, and CI tests the floor and `stable`. Core is stdlib only (`crypto/*`, `hash/crc32`, `syscall`, …). A library's `go` line is a promise about who can import it, and a crypto library should not promise support for a toolchain nobody patches (R-33) |
 | **RNF-02** | Modules: `tally` (core, `filestore`, `seal`, `anchor`, `tallytest`, CLI) and `interop` (tests only, may depend on `golang.org/x/mod`) |
-| **RNF-03** | Targets, measured in [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) with hardware and Go version (#49): batched append ≥ 10k entries/s (met: 44k/s on macOS, 158k/s in a Linux VM, with 256 callers); verify ≥ 100k entries/s per core (met: 1.3M/s and 0.77M/s). `Append`'s p99 is **not a fixed target**: it is the batch in flight's fsync, plus `MaxDelay` as the platform's timer delivers it, plus its own fsync, plus a checkpoint's fsync when one is due, and tally's CPU is about a microsecond of that. The provisional ≤ 5 ms with a 2 ms `MaxDelay` was missed on macOS (one `F_FULLFSYNC`'s p99 alone is 7 ms) and in a Linux VM (timer); it stays provisional for Linux on NVMe until measured there. A single caller sets `MaxDelay` to 0. Raspberry Pi: not yet measured (#115) |
+| **RNF-03** | Targets, measured in [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) with hardware and Go version (#49): batched append ≥ 10k entries/s (met: 44k/s on macOS, 158k/s in a Linux VM, 44k/s on a Raspberry Pi 5's microSD card, with 256 callers); verify ≥ 100k entries/s per core (met: 1.3M/s, 0.77M/s and 0.46M/s). `Append`'s p99 is **not a fixed target**: it is the batch in flight's fsync, plus `MaxDelay` as the platform's timer delivers it, plus its own fsync, plus a checkpoint's fsync when one is due, and tally's CPU is about a microsecond of that. The provisional ≤ 5 ms with a 2 ms `MaxDelay` was missed on macOS (one `F_FULLFSYNC`'s p99 alone is 7 ms), in a Linux VM (timer), and narrowly on the Pi (5.2 ms; 2.8 ms without the delay, #115); it stays provisional for Linux on NVMe until measured there. A single caller sets `MaxDelay` to 0 |
 | **RNF-04** | `Verify` uses O(1) memory in log size, plus the checkpoint window |
 | **RNF-05** | Small public API; details in `internal/`; godoc and `ExampleXxx` in every public package; no global state |
 | **RNF-06** | `*Log` is safe for concurrent use; `Close` is idempotent; no goroutine leaks after `Close`, verified by test |
@@ -563,7 +564,7 @@ Recorded in [`docs/adr/`](docs/adr/README.md).
 | # | Question | Answer | Owner if open |
 | --- | --- | --- | --- |
 | 1 | Default checkpoint and heartbeat interval | 1,000 entries or 60 s (RF-06) | — |
-| 2 | Demo anchor | A second Raspberry Pi pulling over `rsync`; it also proves the host holds no destructive credential. Run so far with the anchor as a container on the same machine, pulling over SSH with a read-only key (#55, `usher/scripts/demo-audit.sh`); that shows the recipe, not the separation | Second machine: not yet run |
+| 2 | Demo anchor | A second Raspberry Pi pulling over `rsync`; it also proves the host holds no destructive credential. First run with the anchor as a container on the same machine (#55), which shows the recipe, not the separation. Then run on a Raspberry Pi 5 (#125, `usher/scripts/demo-audit.sh` with `ANCHOR_SSH`): a dedicated user pulls with its own key, which the host allows only `rrsync -ro`. The rollback verified intact against the host's spool and was detected against the Pi's copy (`TruncatedBelowCheckpoint`, exit 1). From inside the usher stack, logins to the Pi as `anchor`, `pi` and `root` were each refused by the Pi. The operator's own admin login to the Pi sat on the same laptop, outside the usher host as the demo draws it; a deployment keeps no such credential on the host | Run on a Raspberry Pi 5, 2026-11-18 |
 | 3 | Signer in a separate process in the MVP | No; in process, behind the interface (ADR-0015) | — |
 | 4 | Private key file format | The signed-note key encoding, file at `0600` (ADR-0005) | — |
 | 5 | usher's initial action catalogue | Reviewed against the real repository in usher's ADR | #51 |

@@ -60,6 +60,11 @@ func WithAnchors(anchors ...Anchor) Option {
 // and reported through Observer.AnchorPublish with ErrAnchorQueueFull. The
 // newest is never dropped, so the anchor always ends up with the latest
 // claim. n below 1 means 1. The default is 64.
+//
+// The queue counts notes, and a v0.2 checkpoint is two (#60): the
+// tlog-checkpoint, then the heartbeat note. So the default holds 32
+// checkpoints, and a queue of 1 keeps only the newest heartbeat note, never
+// its tlog-checkpoint, which a witness needs (#61).
 func WithAnchorQueue(n int) Option {
 	return func(c *config) { c.anchorQueue = max(n, 1) }
 }
