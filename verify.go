@@ -675,7 +675,7 @@ func Verify(ctx context.Context, src Source, keys Verifiers, opts ...VerifyOptio
 	// Step 11: witnessed, if required (ADR-0021).
 	if cfg.requireWitnessed && rep.Size > rep.WitnessedSize {
 		rep.Failures = append(rep.Failures, Failure{Kind: UnwitnessedTail, Seq: rep.WitnessedSize,
-			Note: fmt.Sprintf("%d leaves past the last checkpoint %d of the trusted witnesses cosigned", rep.Size-rep.WitnessedSize, cfg.quorum)})
+			Note: fmt.Sprintf("%d leaves past the last checkpoint cosigned by a quorum of %d trusted witnesses", rep.Size-rep.WitnessedSize, cfg.quorum)})
 	}
 	return rep, nil
 }

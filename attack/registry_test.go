@@ -57,7 +57,7 @@ var registry = []entry{
 	{"T-08", resPartial, ".", "TestT08RollbackIsSeenOnlyAgainstTheAnchor",
 		"`TruncatedBelowCheckpoint` against the anchor; on the host's word alone, nothing."},
 	{"T-09", resPartial, "attack", "TestT09SplitView",
-		"Two histories each verify against their own anchor; one shared anchor makes the second a fork."},
+		"Two histories each verify against their own anchor; one shared anchor makes the second a fork, and a witness that cosigned only one makes the other `UnwitnessedTail` for a verifier that requires it."},
 	{"T-10", resDetected, "attack", "TestT10SpliceAcrossLogs", "`MalformedRecord`: another log's `log_id`."},
 	{"T-11", resDetected, "attack", "TestT11DuplicateAnEntry", "`SeqRegression`."},
 	{"T-12", resMitigated, "filestore", "TestTruncatedAtEveryByte",

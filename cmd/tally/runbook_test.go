@@ -778,3 +778,60 @@ func TestDrillUpgradeFromV01(t *testing.T) {
 		t.Fatalf("checkpoint --tlog after the upgrade: status %d", code)
 	}
 }
+
+// "A witness on a second machine" (#61, ADR-0021), against a real witness
+// elsewhere: TALLY_DRILL_WITNESS_URL is its base URL and
+// TALLY_DRILL_WITNESS_KEY its verifier key, serving the published test log
+// key with no state for it yet. Skipped otherwise; it was run against a
+// Raspberry Pi 5, and the RUNBOOK records the output.
+//
+// The host keeps one history for the witness and builds a fork from a copy
+// of it, same genesis, same key. The witness refuses the fork, and a verifier
+// requiring the witness passes the honest history and convicts the fork.
+func TestDrillWitnessOnASecondMachine(t *testing.T) {
+	url, wvk := os.Getenv("TALLY_DRILL_WITNESS_URL"), os.Getenv("TALLY_DRILL_WITNESS_KEY")
+	if url == "" || wvk == "" {
+		t.Skip("needs a witness elsewhere: TALLY_DRILL_WITNESS_URL and TALLY_DRILL_WITNESS_KEY")
+	}
+	key := tallytest.TestVerifierKey
+	root := t.TempDir()
+	honest, spool, forkSpool := filepath.Join(root, "log"), filepath.Join(root, "spool"), filepath.Join(root, "fork-spool")
+	for _, d := range []string{spool, forkSpool} {
+		if err := os.Mkdir(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	push := func(dir, anchorDir string) (string, string, int) {
+		out, stderr, code := cli(t, "witness", "push", "--dir", dir, "--key", key, "--witness", url, "--witness-key", wvk, "--anchor", anchorDir)
+		t.Logf("$ tally witness push --dir %s\n%s%sstatus %d", filepath.Base(dir), out, stderr, code)
+		return out, stderr, code
+	}
+	verifyWitnessed := func(dir, anchorDir string) (string, int) {
+		out, stderr, code := cli(t, "verify", "--dir", dir, "--key", key, "--anchor", anchorDir, "--witness", wvk, "--require-witnessed")
+		t.Logf("$ tally verify --dir %s --require-witnessed\n%s%sstatus %d", filepath.Base(dir), out, stderr, code)
+		return out, code
+	}
+
+	writeLog(t, honest, spool, "a", 6, true)
+	if _, _, code := push(honest, spool); code != exitIntact {
+		t.Fatal("the first push was not witnessed; is the witness's state for example.com/log empty?")
+	}
+	fork := filepath.Join(root, "fork")
+	copyDir(t, honest, fork) // same genesis, same first entries, same key
+
+	writeLog(t, honest, spool, "b", 4, true)
+	if _, _, code := push(honest, spool); code != exitIntact {
+		t.Fatal("the honest history's growth was not witnessed")
+	}
+	writeLog(t, fork, forkSpool, "x", 4, true)
+	if _, stderr, code := push(fork, forkSpool); code != exitViolation || !strings.Contains(stderr, "refused the log's history") {
+		t.Fatalf("the fork was not refused by the witness: status %d", code)
+	}
+
+	if _, code := verifyWitnessed(honest, spool); code != exitIntact {
+		t.Fatal("the honest history does not verify witnessed")
+	}
+	if out, code := verifyWitnessed(fork, forkSpool); code != exitViolation || !strings.Contains(out, "UnwitnessedTail") {
+		t.Fatal("the fork was not convicted as unwitnessed")
+	}
+}
