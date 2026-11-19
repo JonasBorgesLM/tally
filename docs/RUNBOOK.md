@@ -85,9 +85,17 @@ credential there: the host pushes to it, and it never connects back.
    `UnwitnessedTail` means leaves no witnessed checkpoint covers: entries since the last push, which the next
    one covers, or a history the witness never saw.
 4. **Prune only at a checkpoint the witness cosigned**: the heartbeat note whose size is at most the size in the
-   newest cosigned `tlog-checkpoint` in the anchor. Pruning above the witness's size strands it (step 2's third
-   refusal), and a witness can only be moved past that by resetting its state by hand, after which it witnesses
-   only from that point.
+   newest cosigned `tlog-checkpoint` in the anchor. Give `tally prune` the witness's key and it enforces this,
+   refusing a prune above what the witness cosigned in the anchor:
+
+   ```bash
+   tally prune --dir LOG --key-file trusted.keys --anchor /srv/anchor --checkpoint /srv/anchor/<file>.note \
+       --witness-key "$(cat witness.pub)"
+   ```
+
+   Pruning above the witness's size strands it (step 2's third refusal), and a witness can only be moved past
+   that by resetting its state by hand, after which it witnesses only from that point. Without `--witness-key`,
+   `prune` cannot know a witness exists.
 
 ### Executed against
 

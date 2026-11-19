@@ -8,6 +8,13 @@ The release workflow will refuse to publish a tag with no section here.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`tally prune --witness-key` refuses a prune above what the witness cosigned** (audit A2-05). Pruning above the
+  witness's size left it no consistency proof to follow, so every later push failed until the witness was reset by
+  hand; the rule was a RUNBOOK line only. With the witness's key, `prune` reads the largest cosigned
+  `tlog-checkpoint` in the anchor and refuses, status 1, a checkpoint above it.
+
 ## [0.2.0] - 2026-11-19
 
 M11: the Merkle tree over the leaves v0.1 already stored, checkpoints as `tlog-checkpoint` plus a heartbeat note,
