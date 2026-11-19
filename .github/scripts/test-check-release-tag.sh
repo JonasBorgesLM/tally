@@ -79,8 +79,17 @@ expect "signed by a key not allowed" 1 "is not signed by a key" v1.0.0
 signed v1.1.0-rc.1
 expect "a release candidate" 0 "prerelease=true" v1.1.0-rc.1
 
-if [ "$ran" -ne 9 ]; then
-  echo "FAIL  ran $ran cases, want 9"
+# A CHANGELOG larger than any pipe buffer, its section near the top: grep
+# finds it at once, and the check must not fail on git show's SIGPIPE.
+# Seen failing with the check's grep -q, which under pipefail refused the tag
+# for "no section"; v0.2.1's own tag check hit it once, at 23 KB, on macOS.
+{ printf '# Changelog\n\n## [1.2.0] - 2026-11-19\n\n'; head -c 2000000 /dev/zero | tr '\0' 'x'; printf '\n'; } >CHANGELOG.md
+git add CHANGELOG.md && git commit -q -m "a large changelog"
+signed v1.2.0
+expect "a CHANGELOG larger than a pipe buffer" 0 "ok    v1.2.0" v1.2.0
+
+if [ "$ran" -ne 10 ]; then
+  echo "FAIL  ran $ran cases, want 10"
   failed=1
 fi
 exit "$failed"

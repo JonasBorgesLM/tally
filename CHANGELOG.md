@@ -8,6 +8,13 @@ The release workflow will refuse to publish a tag with no section here.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The release tag check no longer refuses a tag on a large CHANGELOG.** It piped `git show` into `grep -q` under
+  `pipefail`: `grep -q` exits at the first match, `git show` dies of SIGPIPE, and the pipeline fails, so the check
+  reported "no CHANGELOG section". It hit once while tagging v0.2.1, at 23 KB on macOS (16 KB pipe buffer); on the
+  release workflow's Linux (64 KB) it would have refused every tag once the CHANGELOG passed 64 KB.
+
 ## [0.2.1] - 2026-11-19
 
 The fixes from v0.2.0's clean-session audit (`docs/AUDIT.md`), by an agent of a different model from the one that

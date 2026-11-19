@@ -29,7 +29,9 @@ refuse() {
 }
 
 # 1. SemVer, and nothing else in the name.
-if ! printf '%s' "$tag" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$'; then
+# grep to /dev/null, never -q, after a pipe: under pipefail, -q exits at the
+# first match and the writer dies of SIGPIPE, which fails the pipeline.
+if ! printf '%s' "$tag" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$' >/dev/null; then
   refuse "'$tag' is not vX.Y.Z or vX.Y.Z-rc.N"
 fi
 commit=$(git rev-parse --verify --quiet "refs/tags/$tag^{commit}") || refuse "there is no tag $tag"
@@ -45,7 +47,7 @@ newest=$(git -c versionsort.suffix=-rc. tag --list 'v*' --sort=-v:refname | head
 # 4. A CHANGELOG section for the version, in the tagged commit.
 version=${tag#v}
 version=${version%%-rc.*}
-git show "$commit:CHANGELOG.md" 2>/dev/null | grep -qE "^## \[${version//./\\.}\]" ||
+git show "$commit:CHANGELOG.md" 2>/dev/null | grep -E "^## \[${version//./\\.}\]" >/dev/null ||
   refuse "CHANGELOG.md at $tag has no '## [$version]' section"
 
 # 5. Annotated, and signed by an allowed key, from the tagged commit's list.
