@@ -10,6 +10,38 @@ Exit statuses of `tally verify`, `prune` and `bundle-check`: **0** intact, **1**
 check (usage, IO, untrusted input). A monitor treats 2 as an alert too: a check that cannot run is not a
 check that passed.
 
+## Upgrading from v0.1
+
+v0.2 signs each checkpoint as a pair of notes of one size (ADR-0006's amendment, SPEC §5.2): a
+`tlog-checkpoint` (origin, size, Merkle root), which a witness cosigns, and a `tally-heartbeat/v1` note, which
+carries the head, the time and the state as v0.1's checkpoint did, plus the root. Nothing stored is rewritten,
+and a v0.2 verifier accepts v0.1's `tally-chain/v1` checkpoints beside the new pairs, in the log and in the
+anchor. What an operator sees change:
+
+- **Upgrade the verifier first.** A v0.1 `tally verify` reports every new note as `MalformedRecord` ("the body
+  is not six lines") and exits 1, an alarm, though the log is intact; checked by running the v0.1.0 release on
+  a v0.2 log. So every auditor and monitor moves to v0.2 before the writer does. A v0.2 verifier reads a v0.1
+  log unchanged.
+- **The anchor holds two files per checkpoint**, the `tlog-checkpoint` only when the size has grown:
+  heartbeats at one size share one. Arrival monitoring (below) still sees a file every heartbeat.
+- **The anchor queue counts notes.** `WithAnchorQueue`'s default of 64 now holds 32 checkpoints; size it for
+  twice as many notes as before.
+- **Prune and incremental verification start from a heartbeat note.** A `tlog-checkpoint` names no head, so
+  `tally prune` refuses one and says so; take the `.note` file of the same size that says `tally-heartbeat/v1`
+  on its second line. `tally checkpoint` prints the newest heartbeat note, and `--tlog` the newest
+  `tlog-checkpoint`, for a witness.
+- **`tally head` prints the root**, from leaf 0 or from the pruned range (SPEC §3.6). A log pruned by v0.1 has
+  no range: its root is unknown, its writer keeps signing `tally-chain/v1` checkpoints, and its verifier
+  compares heads only. Nothing about such a log gets weaker; it just gains no root.
+
+### Executed against
+
+`TestDrillUpgradeFromV01`: the bytes of a log a v0.1 writer wrote (`testdata/vectors/segments.json`), its
+`tally-chain/v1` checkpoint in the anchor. The v0.2 writer reopened it, appended and closed, publishing one new
+pair; segment 0 was the same bytes after, and `tally verify --anchor --require-fully-attested` reported all 8
+leaves attested. `tally checkpoint --tlog` printed the new `tlog-checkpoint`. The order of the upgrade, verifiers
+first, is a deployment step, not exercised.
+
 ## Key rotation
 
 A log's checkpoints are signed with one key at a time (RS-06). Rotating replaces that key, for a
@@ -75,7 +107,9 @@ The host signs a heartbeat checkpoint every period even with no entries (RF-06):
 so a planned stop is not an alarm (ADR-0006). On the anchor machine, run two checks on a schedule, and alert
 on either:
 
-1. **Arrival.** A checkpoint file arrived within the period plus the pull interval plus some slack:
+1. **Arrival.** A checkpoint file arrived within the period plus the pull interval plus some slack. Since
+   v0.2, every heartbeat is a new heartbeat note, even when the size has not changed; only the
+   `tlog-checkpoint` beside it waits for the size to grow:
 
    ```bash
    find /srv/anchor -name '*.note' -mmin -5 | grep -q . || alert "no checkpoint has arrived in 5 minutes"
@@ -236,7 +270,9 @@ to an auditor who reads the pruned log.
    ```
 
 2. **Choose the checkpoint from the off-host anchor copy**, one of its `.note` files at the size you prune
-   to, and **close the Log**: the prune takes the directory's lock.
+   to, and **close the Log**: the prune takes the directory's lock. Since v0.2, take the heartbeat note of that
+   size (`tally-heartbeat/v1` on its second line), not the `tlog-checkpoint` beside it, which names no head and
+   is refused.
 3. **Prune:**
 
    ```bash

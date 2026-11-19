@@ -56,14 +56,6 @@ func prunableLog(t *testing.T) (dir, anchorDir string, unanchored, anchored tall
 	return dir, anchorDir, unanchored, anchored
 }
 
-// isTlog reports whether cp's body is a tlog-checkpoint (SPEC §5.2): three
-// lines, the second a size. It names no head, so a prune cannot start from it.
-func isTlog(cp tally.SignedCheckpoint) bool {
-	text, _, ok := strings.Cut(string(cp), "\n\n")
-	lines := strings.Split(text, "\n")
-	return ok && len(lines) == 3 && !strings.HasPrefix(lines[1], "tally-")
-}
-
 // A prune at an anchored tlog-checkpoint is refused, and says to use the
 // heartbeat note of its size, which names the head a prune verifies from
 // (#60). Nothing is removed.

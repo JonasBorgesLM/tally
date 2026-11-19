@@ -28,7 +28,7 @@ detects; it does not prevent. Nothing past the last trusted checkpoint is covere
 ## Architecture
 
 ```
-cmd/tally ──▶ tally, filestore, anchor
+cmd/tally ──▶ tally, filestore, anchor, internal/merkle
 filestore, anchor, seal, tallytest ──▶ tally ──▶ internal/wire, internal/note, internal/merkle
 filestore ──▶ internal/fsx, internal/merkle
 seal ──▶ internal/fsx, internal/wire

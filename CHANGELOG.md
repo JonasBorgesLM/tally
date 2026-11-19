@@ -12,6 +12,11 @@ The release workflow will refuse to publish a tag with no section here.
 
 - The RFC 6962 Merkle tree over the existing leaves, with inclusion and consistency proofs (#59, ADR-0002). A
   v0.1 log needs nothing rewritten. It is internal until checkpoints carry its root (#60).
+- **CLI for v0.2** (#60): `tally head` prints the Merkle root, from leaf 0 or the pruned range, or says it is
+  unknown for a log pruned by v0.1; `tally checkpoint --tlog` prints the newest `tlog-checkpoint`, for a witness,
+  where the default stays the newest heartbeat note. RUNBOOK gains "Upgrading from v0.1", executed against a
+  v0.1 log's own bytes: verifiers first, two anchor files per checkpoint, the queue sized in notes, and prune
+  from a heartbeat note.
 - **The writer signs v0.2 checkpoints** (#60): each checkpoint is a `tlog-checkpoint` and a `tally-heartbeat/v1`
   note of the same size, stored and published in that order. `Log.Checkpoint` returns the heartbeat note, which
   names a head, so it serves `FromCheckpoint` and `Prune` as before; `tally prune` refuses a `tlog-checkpoint`
