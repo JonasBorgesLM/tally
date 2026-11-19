@@ -1,6 +1,7 @@
 package tally
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"errors"
@@ -270,6 +271,10 @@ func (l *Log) load(ctx context.Context, origin string) error {
 	}
 	l.head.tree = new(merkle.Range) // from leaf 0, unless a pruned start replaces it
 	first := true
+	var (
+		fromRange  bool   // the tree came from the store's range, not from leaf 0
+		rangeStart uint64 // where that range starts
+	)
 	for r, err := range l.store.Records(ctx, 0) {
 		if err != nil {
 			return fmt.Errorf("tally: reading the stored log: %w", err)
@@ -285,6 +290,9 @@ func (l *Log) load(ctx context.Context, origin string) error {
 			l.head = chainState{size: r.Seq, logID: e.logID, origin: origin, prevLeaf: e.prevHash, prevTime: math.MinInt64}
 			if l.head.tree, l.head.pending, err = storedTree(ctx, l.store, r.Seq); err != nil {
 				return err
+			}
+			if rng := cmp.Or(l.head.tree, l.head.pending); rng != nil {
+				fromRange, rangeStart = true, rng.Size()
 			}
 			if err := compare(); err != nil {
 				return err
@@ -309,6 +317,14 @@ func (l *Log) load(ctx context.Context, origin string) error {
 			}
 			l.window.add(string(e.eventID), seen{seq: e.seq, leaf: l.head.prevLeaf, fingerprint: fp})
 		}
+	}
+	// A stored range is the host's (SPEC §3.6). The writer signs roots over
+	// it only once a signed root at or above its start has checked it, as
+	// compare did: otherwise the real key would sign a root over a prefix
+	// nobody verified (audit A2-03). Without that, the tree is unknown, and
+	// the writer keeps signing tally-chain/v1, as for a log v0.1 pruned.
+	if fromRange && (stored == nil || !stored.hasRoot || stored.size < rangeStart || !compared) {
+		l.head.tree, l.head.pending = nil, nil
 	}
 	if stored != nil && !compared && stored.size > l.head.size {
 		return fmt.Errorf("%w: the log ends at %d leaves, below it at %d", ErrStoredCheckpointMismatch, l.head.size, stored.size)

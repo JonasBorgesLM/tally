@@ -288,6 +288,12 @@ already in the range. A range whose `s` is below the first segment stands for le
 it, and is refused. A log a v0.1 writer pruned has no range and has lost the leaves one needs: it is pruned
 further without one, and has no tree below its first segment.
 
+**(writer)** A writer reopening a pruned log uses its range only when its last stored checkpoint carries a root,
+at a size at or above the range's start, and the tree the range gives reproduces that root; a root that differs
+is refused (`ErrStoredCheckpointMismatch`). Without such a root, nothing signed has checked the range, so the
+writer treats the tree as unknown and signs `tally-chain/v1` checkpoints: it never signs a root over a prefix the
+host alone vouches for.
+
 A range is written by the host and proves nothing by itself: a proof built from it is checked against a root a
 trusted checkpoint signs, and a false hash makes the proof fail. **A verifier does not read it.**
 

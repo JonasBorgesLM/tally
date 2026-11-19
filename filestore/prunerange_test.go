@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/JonasBorgesLM/tally"
@@ -154,5 +155,170 @@ func TestPruneRangeDecodesOnlyItsOwnEncoding(t *testing.T) {
 	}
 	if len(bad) != 14 {
 		t.Fatalf("checked %d malformed files, want 14", len(bad))
+	}
+}
+
+// prunedAt prunes a fresh prunable log at a checkpoint inside a segment and
+// returns its directory and its range file's path.
+func prunedAt(t *testing.T) (dir, rangePath string) {
+	t.Helper()
+	dir, cps := prunable(t)
+	cp, _ := midSegment(t, dir, cps)
+	s := mustOpen(t, dir)
+	if _, err := s.Prune(context.Background(), cp, verifiers(t)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return dir, filepath.Join(dir, pruneRangeName)
+}
+
+// A pruned.range the host plants on a log v0.1 pruned, whose checkpoints carry
+// no root, is never signed over (audit A2-03): with no signed root at or above
+// its start to check it, the writer treats the tree as unknown and keeps
+// signing tally-chain/v1, with no tlog-checkpoint.
+//
+// Negative control: with load adopting any stored range, the writer signed a
+// tally-heartbeat/v1 note, and a tlog-checkpoint, over the planted prefix.
+// Verified by hand, restored before committing.
+func TestAPlantedRangeIsNeverSignedOver(t *testing.T) {
+	ctx := context.Background()
+	dir, rangePath := prunedAt(t)
+	good, err := os.ReadFile(rangePath) // #nosec G304 -- a test's own file
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Remove(rangePath); err != nil { // as a log v0.1 pruned
+		t.Fatal(err)
+	}
+	appendEvents(t, dir, "c", 3) // no tree: tally-chain/v1 checkpoints
+	start, prefix, err := decodePruneRange(good)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range prefix {
+		prefix[i] = [32]byte{byte(i + 1), 0xAA}
+	}
+	if err = os.WriteFile(rangePath, encodePruneRange(start, prefix), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	tlogs := func() int {
+		r, rerr := OpenReader(dir)
+		if rerr != nil {
+			t.Fatal(rerr)
+		}
+		n := 0
+		for c, cerr := range r.Checkpoints(ctx) {
+			if cerr != nil {
+				t.Fatal(cerr)
+			}
+			if isTlog(c) {
+				n++
+			}
+		}
+		return n
+	}
+	before := tlogs() // the v0.2 writer's, from before the range was removed
+
+	l, err := tally.Open(ctx, mustOpen(t, dir), signer(t), tally.WithCheckpointEvery(0, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = l.Append(ctx, event("d-0")); err != nil {
+		t.Fatal(err)
+	}
+	cp, err := l.Checkpoint(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(cp, []byte("\ntally-chain/v1\n")) {
+		t.Fatalf("the writer signed over a planted range:\n%s", cp)
+	}
+	if after := tlogs(); after != before {
+		t.Fatalf("%d tlog-checkpoints were stored over a planted range", after-before)
+	}
+}
+
+// A range changed after the prune is refused when the writer reopens: its
+// last stored checkpoint's root does not match the tree the range gives
+// (audit A2-04).
+//
+// Negative control: with load's root comparison removed, Open accepted the
+// tampered range. Verified by hand, restored before committing.
+func TestATamperedRangeIsRefusedOnReopen(t *testing.T) {
+	dir, rangePath := prunedAt(t)
+	good, err := os.ReadFile(rangePath) // #nosec G304 -- a test's own file
+	if err != nil {
+		t.Fatal(err)
+	}
+	start, prefix, err := decodePruneRange(good)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prefix[0][0] ^= 1
+	if err = os.WriteFile(rangePath, encodePruneRange(start, prefix), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tally.Open(context.Background(), mustOpen(t, dir), signer(t)); !errors.Is(err, tally.ErrStoredCheckpointMismatch) {
+		t.Fatalf("Open over a tampered range: %v, want ErrStoredCheckpointMismatch", err)
+	}
+}
+
+// A range that starts below the first segment stands for leaves that are
+// gone and not in it: a further prune refuses rather than extend it (SPEC
+// §3.6, audit A2-04).
+//
+// Negative control: with treeUpTo's start-below-first check removed, Prune
+// was still refused, by internal/merkle ("no compact range of 25 in a tree of
+// 9"), a reason no operator could act on; the test requires the one that
+// names the range. Verified by hand, restored before committing.
+func TestPruneRefusesARangeBelowTheFirstSegment(t *testing.T) {
+	ctx := context.Background()
+	dir, rangePath := prunedAt(t)
+	good, err := os.ReadFile(rangePath) // #nosec G304 -- a test's own file
+	if err != nil {
+		t.Fatal(err)
+	}
+	start, _, err := decodePruneRange(good)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if start < 2 {
+		t.Fatalf("the prune kept records from %d; the test needs a range to move below", start)
+	}
+	low := uint64(1) // one hash, any value: the start alone is what is refused
+	if err = os.WriteFile(rangePath, encodePruneRange(low, [][32]byte{{0xBB}}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := mustOpen(t, dir)
+	defer func() { _ = s.Close() }()
+	var newest tally.SignedCheckpoint
+	for c, err := range s.Checkpoints(ctx) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !isTlog(c) {
+			newest = c
+		}
+	}
+	before, err := os.ReadFile(rangePath) // #nosec G304 -- a test's own file
+	if err != nil {
+		t.Fatal(err)
+	}
+	removed, err := s.Prune(ctx, newest, verifiers(t))
+	if err == nil || !strings.Contains(err.Error(), "below the log's first record") {
+		t.Fatalf("a prune over a range below the first segment: removed %d, %v; want a refusal naming the range", removed, err)
+	}
+	after, err := os.ReadFile(rangePath) // #nosec G304 -- a test's own file
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatal("the refused prune rewrote the range")
 	}
 }
