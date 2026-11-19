@@ -10,6 +10,14 @@ The release workflow will refuse to publish a tag with no section here.
 
 ### Added
 
+- **The witness** (#61, ADR-0021): package `witness`, a c2sp.org/tlog-witness `add-checkpoint` server that cosigns a
+  log's `tlog-checkpoint` only when a consistency proof ties it to the last one it cosigned, and writes its state
+  durably before it answers, under one lock with the size check. `tally witness serve` runs it on the witness's
+  machine; `tally witness push` runs on the log's host: it learns the witness's size from a `409`, builds the
+  proof from the stored leaves and the pruned range, checks the cosignature it gets back, and publishes the
+  cosigned checkpoint to the anchor spool. A push refuses, status 1, when the witness holds more than the log
+  (a rollback) or a prune left it behind. `tally keygen --witness` makes a witness key; `tally.CountCosignatures`
+  counts a checkpoint's trusted cosignatures. `tally` now also stops on SIGTERM.
 - **Witness cosignatures in `Verify`** (#61, ADR-0021): `WithWitnesses(keys, quorum)` trusts c2sp.org/tlog-cosignature
   `cosignature/v1` cosignatures from witness keys (type `0x04`); `Report.WitnessedSize` is the largest matched
   checkpoint a quorum cosigned, and `WithRequireWitnessed` makes the rest `UnwitnessedTail`, a new violation kind,
